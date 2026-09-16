@@ -1,14 +1,9 @@
-"""Discovery is what the operator asked for, run as widely as the source allows.
+"""Source adapters report why they stopped, and stay inside the USA.
 
-Three properties are pinned here, because each one was a real defect:
-
-1. **The operator decides.** The dashboard used to post ``auto_plan: True`` and
-   a probe count, so a SOC planner chose the sector, the location and the terms.
-2. **USA means nationwide.** Not "iterate 50 states", not "sample some metros" -
-   one scope, passed through, working whether or not those datasets exist.
-3. **Coverage, not the first N.** Sources are paged until they run out or refuse,
-   and when *we* stop a source early that is recorded as our decision, not
-   mistaken for the source having nothing left.
+**Coverage, not the first N.** Sources are paged until they run out or refuse,
+and when *we* stop a source early that is recorded as our decision, not mistaken
+for the source having nothing left. Planning and the registry are covered in
+``test_planner_registry.py``.
 """
 from __future__ import annotations
 
@@ -18,9 +13,6 @@ from pathlib import Path
 import pytest
 
 from nexbase.config import Settings
-from nexbase.core.errors import DiscoveryError
-from nexbase.db.repository import InertRepository
-from nexbase.discovery import taxonomy
 from nexbase.discovery.coverage import (
     BLOCKED,
     BUDGET_REACHED,
@@ -30,269 +22,12 @@ from nexbase.discovery.coverage import (
     SourceOutcome,
     classify_fetch_failure,
 )
-from nexbase.discovery.planner import (
-    NATIONWIDE,
-    DiscoveryConfig,
-    DiscoveryPlanner,
-    build_config,
-    is_nationwide,
-    known_sectors,
-)
-from nexbase.pipeline.runner import PipelineRunner
 from tests.test_hardening import StubAccess
-
-
-# ===========================================================================
-# USA is the default, and USA means nationwide
-# ===========================================================================
-def test_usa_is_the_default_location():
-    assert build_config(search_terms=["welder"]).location == NATIONWIDE
-    assert Settings(_env_file=None).discovery_default_location == "USA"
-
-
-def test_usa_means_nationwide():
-    assert build_config(search_terms=["welder"]).nationwide is True
-
-
-@pytest.mark.parametrize(
-    "spelling",
-    ["USA", "usa", "US", "United States", "united states of america",
-     "nationwide", "Anywhere"],
-)
-def test_the_nationwide_scope_survives_however_it_is_spelled(spelling):
-    assert is_nationwide(spelling) is True
-
-
-@pytest.mark.parametrize("narrow", ["Ohio", "Columbus, OH", "TX", "Greenville, SC"])
-def test_a_named_place_is_not_nationwide(narrow):
-    assert is_nationwide(narrow) is False
-    assert build_config(search_terms=["welder"], location=narrow).nationwide is False
-
-
-def test_nationwide_is_one_scope_not_an_enumeration(settings):
-    """USA is sent to the sources as USA. It is never expanded."""
-    plan = DiscoveryPlanner(settings).plan(
-        build_config(search_terms=["welder", "machinist"]))
-    assert plan.locations == [NATIONWIDE]
-    assert len(plan.probes) == 2, "one probe per term, not per term x state"
-
-
-def test_a_narrow_location_still_reaches_the_sources(settings, monkeypatch):
-    import tests.test_hardening as th
-
-    th._patch_sources(monkeypatch)
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["machinist"], location="Columbus, OH"))
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    runner.run(plan=plan, persist=False)
-
-    assert th._RecordingJobSpy.seen
-    assert all(loc == ("Columbus, OH",) for _, loc in th._RecordingJobSpy.seen)
-
-
-# ===========================================================================
-# The operator's configuration is authoritative
-# ===========================================================================
-def test_the_selected_sector_reaches_the_execution_plan(settings):
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], sector="Construction"))
-    assert plan.sector == "Construction"
-    assert {p.client_industry for p in plan.probes} == {"Construction"}
-    assert plan.to_dict()["sector"] == "Construction"
-
-
-def test_an_unknown_sector_is_refused_rather_than_guessed():
-    with pytest.raises(DiscoveryError, match="unknown sector"):
-        build_config(search_terms=["welder"], sector="Underwater Basket Weaving")
-
-
-def test_the_selected_sector_applies_to_this_run_only(settings):
-    """It is search intent for one run, never a standing allowlist."""
-    first = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], sector="Manufacturing"))
-    second = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], sector="Retail"))
-    assert first.sector == "Manufacturing" and second.sector == "Retail"
-
-
-def test_explicit_search_terms_reach_the_execution_plan(settings):
-    terms = ["warehouse associate", "production worker", "machine operator"]
-    plan = DiscoveryPlanner(settings).plan(build_config(search_terms=terms))
-    assert [p.search_term for p in plan.probes] == terms
-    assert plan.to_dict()["search_terms"] == terms
-
-
-def test_explicit_search_terms_reach_the_sources(settings, monkeypatch):
-    import tests.test_hardening as th
-
-    th._patch_sources(monkeypatch)
-    terms = ["warehouse associate", "production worker"]
-    plan = DiscoveryPlanner(settings).plan(build_config(search_terms=terms))
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    runner.run(plan=plan, persist=False)
-
-    searched = {t[0] for t, _ in th._RecordingJobSpy.seen}
-    assert searched == set(terms)
-    assert {c["query"] for c in th._RecordingATS.seen} <= set(terms)
-
-
-def test_a_run_without_search_terms_is_refused_not_invented():
-    """The whole point: NexBase does not choose what to look for."""
-    with pytest.raises(DiscoveryError, match="search term"):
-        build_config(search_terms=[])
-    with pytest.raises(DiscoveryError, match="search term"):
-        build_config(search_terms=["", "   "])
-
-
-def test_terms_are_deduplicated_but_never_substituted():
-    config = build_config(search_terms=["welder", " welder ", "machinist"])
-    assert config.search_terms == ("welder", "machinist")
-
-
-def test_the_configured_band_reaches_the_plan(settings):
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], size_min=25, size_max=75))
-    assert (plan.size_min, plan.size_max) == (25, 75)
-
-
-def test_the_band_defaults_to_the_briefs_eleven_to_two_hundred():
-    """Against the shipped defaults, not whatever the local .env happens to say."""
-    shipped = Settings(_env_file=None)
-    plan = DiscoveryPlanner(shipped).plan(build_config(search_terms=["welder"]))
-    assert (plan.size_min, plan.size_max) == (11, 200)
-
-
-def test_an_env_override_of_the_band_is_honoured(settings):
-    """The band is configuration: a deployment may set its own."""
-    tuned = settings.model_copy(update={"size_filter_min": 20, "size_filter_max": 150})
-    plan = DiscoveryPlanner(tuned).plan(build_config(search_terms=["welder"]))
-    assert (plan.size_min, plan.size_max) == (20, 150)
-
-
-def test_an_inverted_band_is_refused():
-    with pytest.raises(DiscoveryError, match="size_min"):
-        build_config(search_terms=["welder"], size_min=300, size_max=10)
-
-
-def test_freshness_is_the_operators_choice(settings):
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], freshness_days=7))
-    assert plan.hours_old == 7 * 24
-
-
-def test_source_selection_is_the_operators_choice(settings):
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], jobspy_sites=["indeed"],
-        board_sites=["simplyhired"], ats_slices=["greenhouse"]))
-    assert plan.sites == ["indeed"]
-    assert plan.board_sites == ["simplyhired"]
-    assert plan.ats_slices == ["greenhouse"]
-
-
-def test_planning_is_deterministic(settings):
-    """No sampling and no seed: the same choices are the same run."""
-    config = build_config(search_terms=["welder", "machinist"], sector="Retail")
-    a = DiscoveryPlanner(settings).plan(config)
-    b = DiscoveryPlanner(settings).plan(config)
-    assert [p.key for p in a.probes] == [p.key for p in b.probes]
-    assert a.to_dict()["probes"] == b.to_dict()["probes"]
-
-
-# ===========================================================================
-# Autonomous planning is gone from the front door
-# ===========================================================================
-def test_the_planner_refuses_to_run_without_a_configuration(settings):
-    with pytest.raises(DiscoveryError, match="DiscoveryConfig"):
-        DiscoveryPlanner(settings).plan(40)
-
-
-def test_normal_discovery_does_not_depend_on_autonomous_planning(monkeypatch, settings):
-    """A run with no plan discovers nothing rather than inventing one."""
-    import tests.test_hardening as th
-
-    th._patch_sources(monkeypatch)
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    report = runner.run(persist=False)
-
-    assert report.raw_jobs == 0
-    assert not th._RecordingJobSpy.seen, "no source may run without a plan"
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["auto_plan", "plan_probes", "nexbase_sweep", "cmd_plan",
-     "split_core_exploration", "sample_exploration_terms", "sample_locations",
-     "secondary_industries", "SECONDARY_INDUSTRIES"],
-)
-def test_obsolete_autonomous_entry_points_are_gone(name):
-    for path in Path("nexbase").rglob("*.py"):
-        src = path.read_text(encoding="utf-8")
-        body = "\n".join(
-            line for line in src.splitlines() if not line.strip().startswith("#"))
-        # The flow module explains in prose why the sweep was removed.
-        body = body.split('"""')[0] if path.name == "lead_pipeline.py" else body
-        assert name not in body, f"{name} still referenced in {path}"
-
-
-def test_the_runner_has_no_autonomous_entry_point():
-    import inspect
-
-    from nexbase.pipeline.runner import PipelineRunner
-
-    params = inspect.signature(PipelineRunner.run).parameters
-    assert "auto_plan" not in params
-    assert "plan_probes" not in params
-
-
-# ===========================================================================
-# Taxonomy / SOC / NAICS remain as supporting infrastructure
-# ===========================================================================
-def test_taxonomy_still_serves_the_sector_dropdown():
-    assert len(known_sectors()) == 10
-    assert "Manufacturing" in known_sectors()
-    assert set(known_sectors()) == set(taxonomy.industries())
-
-
-def test_taxonomy_still_suggests_search_terms():
-    suggestions = taxonomy.suggest_terms_for_sector("Manufacturing", count=10)
-    assert 0 < len(suggestions) <= 10
-    assert all(isinstance(t, str) and t.strip() for t in suggestions)
-
-
-def test_suggestions_do_not_restrict_what_may_be_searched(settings):
-    """A term no suggestion list contains must still run."""
-    invented = "underwater welding supervisor"
-    assert invented not in taxonomy.suggest_terms_for_sector("Manufacturing")
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=[invented], sector="Manufacturing"))
-    assert [p.search_term for p in plan.probes] == [invented]
-
-
-def test_the_naics_and_soc_data_is_still_loaded():
-    assert len(taxonomy.load_industries()) >= 80
-    assert len(taxonomy.load_search_terms()) > 10000
-    assert taxonomy.industry_for_title("Welder")
 
 
 # ===========================================================================
 # Coverage: maximum practical, with our limits told apart from theirs
 # ===========================================================================
-def test_there_is_no_arbitrary_global_result_cap(settings):
-    """Budgets are per (source, query) and configurable - not a flat first-N."""
-    plan = DiscoveryPlanner(settings).plan(build_config(search_terms=["welder"]))
-    assert plan.max_results_per_query == settings.discovery_max_results_per_query
-    assert plan.max_pages_per_query == settings.discovery_max_pages_per_query
-
-    generous = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder"], max_results_per_query=50000,
-        max_pages_per_query=400))
-    assert generous.max_results_per_query == 50000
-    assert generous.max_pages_per_query == 400
-
-
 def test_board_pagination_continues_until_the_source_is_exhausted(settings):
     """Three pages of rows, then an empty one: all three pages are taken."""
     from nexbase.discovery.board_scrapers import SimplyHiredDiscovery
@@ -384,37 +119,6 @@ def test_coverage_rolls_up_per_source():
     assert row["stop_reasons"] == {SOURCE_EXHAUSTED: 1, BUDGET_REACHED: 1}
 
 
-def test_the_run_report_carries_coverage(monkeypatch, settings):
-    import tests.test_hardening as th
-
-    th._patch_sources(monkeypatch)
-    plan = DiscoveryPlanner(settings).plan(build_config(search_terms=["welder"]))
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    report = runner.run(plan=plan, persist=False)
-
-    assert "coverage" in report.to_dict()
-    assert "by_source" in report.coverage
-
-
-def test_an_ats_probe_stopped_by_our_budget_is_recorded(monkeypatch, settings):
-    """ats_max_probes is our ceiling, not the dataset's."""
-    import tests.test_hardening as th
-
-    th._patch_sources(monkeypatch)
-    settings.ats_max_probes = 1
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder", "machinist", "packer"]))
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    report = runner.run(plan=plan, persist=False)
-
-    ats = [o for o in report.coverage["outcomes"] if o["source"] == "ats"]
-    budgeted = [o for o in ats if o["stop_reason"] == BUDGET_REACHED]
-    assert len(budgeted) == 2, "the two skipped probes must say why"
-    assert all(o["limited_by_nexbase"] for o in budgeted)
-
-
 # ===========================================================================
 # A USA run stays inside the USA
 # ===========================================================================
@@ -428,7 +132,7 @@ def test_a_non_us_board_cannot_enter_a_usa_run(settings, monkeypatch, site):
                         lambda **kw: called.append(kw["site_name"]) or None)
 
     mod.JobSpyDiscovery(settings).search(
-        search_terms=["welder"], locations=[NATIONWIDE], site_names=[site])
+        search_terms=["welder"], locations=["USA"], site_names=[site])
 
     assert called == [], f"{site} must never run"
 
@@ -441,7 +145,7 @@ def test_us_sites_still_run_when_a_non_us_one_is_configured(settings, monkeypatc
                         lambda **kw: called.append(kw["site_name"][0]) or None)
 
     mod.JobSpyDiscovery(settings).search(
-        search_terms=["welder"], locations=[NATIONWIDE],
+        search_terms=["welder"], locations=["USA"],
         site_names=["indeed", "naukri"])
 
     assert called == ["indeed"]
@@ -760,16 +464,30 @@ def test_the_full_snapshot_and_dated_deltas_bypass_the_slice_cache(monkeypatch):
     assert cache.stats()["downloads"] == 0
 
 
-def test_every_ats_client_in_a_run_shares_the_runs_cache(settings):
-    """Three probes must not mean three downloads of the same slice."""
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    runner._ats_slice_cache = __import__(
-        "nexbase.discovery.ats_discovery", fromlist=["ATSSliceCache"]
-    ).ATSSliceCache()
+def test_every_ats_source_in_a_run_shares_one_slice_cache(settings, monkeypatch):
+    """Ten ATS sources and many queries must not mean repeat downloads."""
+    import nexbase.discovery.registry as reg
+    from nexbase.discovery.planner import NATIONWIDE, TitleVariant
 
-    caches = {id(runner._ats_discovery().slice_cache) for _ in range(3)}
-    assert caches == {id(runner._ats_slice_cache)}
+    caches = []
+
+    class FakeATS:
+        def __init__(self, settings, log, slice_cache=None):
+            caches.append(slice_cache)
+            self.errors = []
+
+        def search(self, **kwargs):
+            return []
+
+    monkeypatch.setattr(reg, "ATSDiscovery", FakeATS)
+    query = reg.SourceQuery(TitleVariant("machinist", "INPUT"), NATIONWIDE, "", 336)
+    for source in reg.build_registry(settings).sources():
+        if source.source_class is reg.SourceClass.ATS:
+            source.adapter(query)
+            source.adapter(query)
+
+    assert len(caches) == 2 * len(reg.ATS_PORTALS)
+    assert len({id(c) for c in caches}) == 1
 
 
 def test_a_standalone_discovery_still_gets_its_own_cache(settings):

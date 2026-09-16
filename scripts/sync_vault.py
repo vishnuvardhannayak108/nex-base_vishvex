@@ -64,7 +64,7 @@ def facts() -> dict:
     sys.path.insert(0, str(ROOT))
     from nexbase.config import get_settings
     from nexbase.discovery import taxonomy
-    from nexbase.discovery.board_scrapers import BOARD_SCRAPERS, DISABLED_BOARD_SCRAPERS
+    from nexbase.discovery.registry import build_registry
 
     s = get_settings()
     industries = taxonomy.load_industries()
@@ -76,10 +76,7 @@ def facts() -> dict:
     ))
     return {
         "tests": test_count(),
-        "jobspy_sites": s.jobspy_sites,
-        "board_scrapers": sorted(BOARD_SCRAPERS),
-        "board_disabled": sorted(DISABLED_BOARD_SCRAPERS),
-        "ats_slices": s.ats_slices,
+        "sources": [src.describe() for src in build_registry(s).sources()],
         "industries": len(industries),
         "core_subsectors": sum(1 for i in industries if i.is_core),
         "non_core_subsectors": sum(1 for i in industries if not i.is_core),
@@ -94,7 +91,8 @@ def facts() -> dict:
         "domain_negative_cache_days": s.domain_negative_cache_days,
         "freshness": f"P1 {s.freshness_priority1_min_hours}h-{s.freshness_priority1_max_days}d, "
                      f"P2 to {s.freshness_priority2_max_days}d, P3 to {s.freshness_max_days}d",
-        "default_location": s.discovery_default_location,
+        "max_title_variants": s.planner_max_title_variants,
+        "source_max_calls": s.source_max_calls_per_run,
         "max_pages_per_query": s.discovery_max_pages_per_query,
         "max_results_per_query": s.discovery_max_results_per_query,
         "excluded_socs": sorted(taxonomy.EXCLUDED_SOC_MAJOR_GROUPS),
@@ -104,6 +102,10 @@ def facts() -> dict:
 def render(f: dict) -> str:
     def lst(items):
         return ", ".join(f"`{i}`" for i in items) if items else "_none_"
+
+    def portals(source_class, enabled=True):
+        return lst([x["portal"] for x in f["sources"]
+                    if x["source_class"] == source_class and x["enabled"] is enabled])
 
     return f"""---
 project: NexBase
@@ -134,30 +136,28 @@ Engineering status for the Nex-Base delivery, built to the Master Plan
 | Export | CSV + `/leads` API |
 | Outreach | **out of scope** — removed in Phase 1 |
 
-## Sources
+## Sources (registry)
 
-- **Job portals**: {lst(f["jobspy_sites"])} via JobSpy, plus own adapters {lst(f["board_scrapers"])}
-- **Disabled**: {lst(f["board_disabled"])} — fetches but serves no job rows
-- **Broken upstream in JobSpy**: `zip_recruiter` (403), `glassdoor` (400), `google` (cursor)
-- **ATS slices**: {len(f["ats_slices"])} enabled — {lst(f["ats_slices"])}
+One handler per portal; `SOURCES_DISABLED` switches portals off.
 
-## Discovery front door — user-configured
+- **DIRECT**: {portals("DIRECT")} (JobSpy handles indeed, linkedin, zip_recruiter,
+  glassdoor, google; NexBase board adapters the rest)
+- **ATS**: {portals("ATS")}
+- **APIFY**: {portals("APIFY")}
+- **Disabled**: {lst([x["portal"] for x in f["sources"] if not x["enabled"]])}
+- Per source: min interval, a **{f["source_max_calls"]}-call** budget per run,
+  error tracking, metrics, provenance on every job
+- **Broken upstream in JobSpy** (Phase 3): `zip_recruiter` (403), `glassdoor` (400), `google` (cursor)
 
-Discovery is **not autonomous**. The operator states the run and NexBase
-executes it; nothing about a run is generated.
+## Discovery front door — Sector + Job
 
-- Each run is configured with: **sector · location · search terms · employee
-  band · freshness · sources**
-- **Default geographic scope: `{f["default_location"]}`** — and USA means
-  **nationwide United States**, sent to each source as one scope
-- Nationwide discovery does **not** depend on hardcoded states or metros
-- **Explicit operator search terms drive discovery.** There is no generated term
-  list and no fixed title universe — blue-collar and white-collar both searched
-- Autonomous search is **not part of the current product front door**. The
-  obsolete entry points (`auto_plan`, `nexbase_sweep`, `cmd_plan`,
-  `DiscoveryPlanner.plan`'s autonomous body, `split_core_exploration`,
-  `allocate`, `sample_exploration_terms`, `sample_locations`) were removed. It
-  may return later as a separate, explicitly-chosen capability
+The user gives a **sector** and a **job**. The USA-wide planner derives the rest:
+
+- Up to **{f["max_title_variants"]}** title variants from the O*NET taxonomy (same
+  occupation, shared distinctive word); unknown or vague jobs are searched as typed
+- Geography: **nationwide first**; a query that hits a result cap fans out to all
+  50 states + DC
+- Freshness window: {f["freshness"]}
 
 ## Coverage
 

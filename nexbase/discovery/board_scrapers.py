@@ -486,7 +486,7 @@ class BoardScraper(ABC):
 class MonsterDiscovery(BoardScraper):
     """Monster.com search results.
 
-    NON-FUNCTIONAL as of 2026-09-14 and disabled in ``BOARD_SCRAPERS``.
+    NON-FUNCTIONAL as of 2026-09-14 and disabled by default (``SOURCES_DISABLED``).
     Live check: the page fetches fine (HTTP 200, ~174 KB, correct search title,
     results header present) but contains zero job rows - no JobPosting JSON-LD,
     no ``__NEXT_DATA__`` job array, and no card markup. Waiting for network idle
@@ -690,26 +690,11 @@ class PostJobFreeDiscovery(BoardScraper):
             )
         return jobs
 
-#: Only scrapers verified to return usable jobs. Monster is implemented but
-#: excluded - see MonsterDiscovery for the live-test evidence.
+#: Every board adapter NexBase implements, by portal. Whether one runs is the
+#: source registry's decision (``SOURCES_DISABLED``); Monster is off by default.
 BOARD_SCRAPERS = {
     "simplyhired": SimplyHiredDiscovery,
     "talent_com": TalentComDiscovery,
     "postjobfree": PostJobFreeDiscovery,
-}
-
-#: Implemented but not returning results; kept for re-testing.
-DISABLED_BOARD_SCRAPERS = {
     "monster": MonsterDiscovery,
 }
-
-
-def build_board_scrapers(
-    names: list[str], access: AccessLayer | None = None, logger=None
-) -> list[BoardScraper]:
-    scrapers = []
-    for name in names:
-        cls = BOARD_SCRAPERS.get(name.strip().lower())
-        if cls is not None:
-            scrapers.append(cls(access=access, logger=logger))
-    return scrapers

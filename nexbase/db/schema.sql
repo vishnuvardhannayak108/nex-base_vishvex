@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     CONSTRAINT uq_jobs_dedup UNIQUE (company_id, source_type, external_id)
 );
 
+-- Which registered source, handler and planned query found the posting.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS provenance jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs (company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_posting_date ON jobs (posting_date);
 CREATE INDEX IF NOT EXISTS idx_jobs_freshness ON jobs (freshness_priority);

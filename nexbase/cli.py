@@ -3,7 +3,9 @@
     python -m nexbase.cli db apply-schema
     python -m nexbase.cli db health
     python -m nexbase.cli sectors --sector Manufacturing
-    python -m nexbase.cli run --sector Manufacturing --term "Warehouse Manager"
+    python -m nexbase.cli sources
+    python -m nexbase.cli plan --sector Manufacturing --job "Warehouse Manager"
+    python -m nexbase.cli run --sector Manufacturing --job "Warehouse Manager"
     python -m nexbase.cli export leads.csv
 """
 from __future__ import annotations
@@ -56,76 +58,59 @@ def cmd_db_health(args) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sectors / run
+# sectors / sources / plan / run
 # ---------------------------------------------------------------------------
 def cmd_sectors(args) -> int:
-    """Print the sector list, and suggested search terms for one sector.
-
-    Suggestions only: `run` searches the terms you pass it, not these.
-    """
+    """Print the sector list, and suggested jobs for one sector."""
     from nexbase.discovery import taxonomy
-    from nexbase.discovery.planner import NATIONWIDE, known_sectors
+    from nexbase.discovery.planner import known_sectors
 
-    payload = {"sectors": known_sectors(), "default_location": NATIONWIDE}
+    payload = {"sectors": known_sectors()}
     if args.sector:
         payload["sector"] = args.sector
-        payload["suggested_search_terms"] = taxonomy.suggest_terms_for_sector(
+        payload["suggested_jobs"] = taxonomy.suggest_terms_for_sector(
             args.sector, count=args.limit)
     print(json.dumps(payload, indent=2))
     return 0
 
 
-def cmd_run(args) -> int:
+def cmd_sources(args) -> int:
+    """Print every registered source and whether it will run."""
+    from nexbase.discovery.registry import build_registry
+
+    print(json.dumps([s.describe() for s in build_registry().sources()], indent=2))
+    return 0
+
+
+def _plan(args):
     from nexbase.core.errors import DiscoveryError
-    from nexbase.discovery.planner import DiscoveryPlanner, build_config
+    from nexbase.discovery.planner import DiscoveryPlanner
+
+    try:
+        return DiscoveryPlanner().plan(args.sector, args.job)
+    except DiscoveryError as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+
+
+def cmd_plan(args) -> int:
+    """Print the USA-wide plan for a sector and job without running it."""
+    plan = _plan(args)
+    if plan is None:
+        return 1
+    print(json.dumps(plan.to_dict(), indent=2))
+    return 0
+
+
+def cmd_run(args) -> int:
     from nexbase.pipeline.runner import PipelineRunner
 
-    settings = get_settings()
-
-    # Optional per-run override of the configured 11-200 employee band.
-    overrides = {}
-    if args.min_employees is not None:
-        overrides["size_filter_min"] = args.min_employees
-    if args.max_employees is not None:
-        overrides["size_filter_max"] = args.max_employees
-    if overrides:
-        settings = settings.model_copy(update=overrides)
-        if settings.size_filter_min > settings.size_filter_max:
-            print("--min-employees must not exceed --max-employees", file=sys.stderr)
-            return 1
-        print(
-            f"employee band for this run: "
-            f"{settings.size_filter_min}-{settings.size_filter_max}",
-            file=sys.stderr,
-        )
-
-    # Discovery is whatever the operator asked for. There is no path here
-    # that invents a sector, a location or a search term.
-    plan = None
-    terms = [t.strip() for t in (args.terms or []) if t.strip()]
-    if terms:
-        try:
-            config = build_config(
-                search_terms=terms,
-                sector=args.sector,
-                location=args.location,
-                size_min=args.min_employees,
-                size_max=args.max_employees,
-                freshness_days=args.freshness_days,
-            )
-        except DiscoveryError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        plan = DiscoveryPlanner(settings).plan(config)
-        print(
-            f"plan: {len(plan.probes)} probe(s) | sector={config.sector or '-'} "
-            f"| location={config.location}"
-            f"{' (nationwide)' if config.nationwide else ''}",
-            file=sys.stderr,
-        )
-
-    runner = PipelineRunner(settings)
-    report = runner.run(
+    plan = _plan(args)
+    if plan is None:
+        return 1
+    print(f"plan {plan.run_key}: {len(plan.titles)} title(s), USA-wide",
+          file=sys.stderr)
+    report = PipelineRunner().run(
         plan=plan,
         persist=not args.dry_run,
         stop_at=args.stop_at,
@@ -161,38 +146,27 @@ def build_parser() -> argparse.ArgumentParser:
     health_p = db.add_parser("health", help="verify every table exists")
     health_p.set_defaults(func=cmd_db_health)
 
-    plan_p = sub.add_parser(
-        "sectors", help="list sectors and suggested search terms")
-    plan_p.add_argument("--sector", default=None,
-                        help="show suggested search terms for this sector")
-    plan_p.add_argument("--limit", type=int, default=50)
-    plan_p.set_defaults(func=cmd_sectors)
+    sectors_p = sub.add_parser("sectors", help="list sectors and suggested jobs")
+    sectors_p.add_argument("--sector", default=None,
+                           help="show suggested jobs for this sector")
+    sectors_p.add_argument("--limit", type=int, default=50)
+    sectors_p.set_defaults(func=cmd_sectors)
 
-    run_p = sub.add_parser("run", help="run the pipeline")
-    run_p.add_argument(
-        "--sector", default=None,
-        help="sector for this run only (see `nexbase sectors`)")
-    run_p.add_argument(
-        "--location", default=None,
-        help="USA (default) means nationwide; or name a state/metro to narrow")
-    run_p.add_argument(
-        "--term", dest="terms", action="append", default=None,
-        help="a search term; repeat for more. Required to discover anything.")
-    run_p.add_argument(
-        "--freshness-days", type=int, default=None,
-        help="maximum posting age; the brief's ceiling is 14")
-    run_p.add_argument(
-        "--min-employees", type=int, default=None,
-        help="Employee-band minimum for this run (default: configured value).")
-    run_p.add_argument(
-        "--max-employees", type=int, default=None,
-        help="Employee-band maximum for this run (default: configured value).")
+    sub.add_parser("sources", help="list registered sources").set_defaults(
+        func=cmd_sources)
+
+    def sector_and_job(p):
+        p.add_argument("--sector", required=True, help="one of: nexbase sectors")
+        p.add_argument("--job", required=True, help="job title or job category")
+
+    plan_p = sub.add_parser("plan", help="show the USA-wide plan, run nothing")
+    sector_and_job(plan_p)
+    plan_p.set_defaults(func=cmd_plan)
+
+    run_p = sub.add_parser("run", help="run the pipeline for a sector and job")
+    sector_and_job(run_p)
     run_p.add_argument("--dry-run", action="store_true", help="do not write to the database")
-    run_p.add_argument(
-        "--stop-at",
-        choices=["before_contacts"],
-        default=None,
-    )
+    run_p.add_argument("--stop-at", choices=["before_contacts"], default=None)
     run_p.add_argument("--linkedin-signal", action="store_true")
     run_p.add_argument("-v", "--verbose", action="store_true")
     run_p.set_defaults(func=cmd_run)

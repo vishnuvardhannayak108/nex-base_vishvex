@@ -7,6 +7,7 @@ times each pipeline stage and records its outcome for the run report.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from contextlib import contextmanager
 from typing import Iterator
@@ -37,11 +38,12 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
     structlog.configure(
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(min_level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        # stderr, so a command's own output on stdout stays parseable.
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
 
-    logging.basicConfig(level=min_level, format="%(message)s")
+    logging.basicConfig(level=min_level, format="%(message)s", stream=sys.stderr)
 
 
 def ensure_logging_configured(level: str = "INFO", json_output: bool = True) -> None:

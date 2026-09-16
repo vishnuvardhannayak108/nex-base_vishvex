@@ -175,7 +175,7 @@ class JobSpyDiscovery:
         JobSpy's internal thread pool does the concurrency, rather than one
         serial call per site.
         """
-        requested = site_names or self.settings.jobspy_sites
+        requested = site_names or []
         sites = [s for s in requested if s in SUPPORTED_SITES]
         unsupported = set(site_names or []) - SUPPORTED_SITES
         if unsupported:

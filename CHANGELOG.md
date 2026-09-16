@@ -8,6 +8,62 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 2 — USA-wide planner + source registry (2026-09-16)
+
+Tests: 709 before, **678 passed** after (0 failed). 29 new tests in
+`tests/test_planner_registry.py`; 60 old tests removed because they pinned the
+operator-configured input model the plan replaces (search terms, location,
+size band, source lists as run input).
+
+### Added
+
+- **`nexbase/discovery/planner.py`** (rewritten): `DiscoveryPlanner().plan(sector,
+  job)`. Title variants from the O*NET taxonomy (same SOC occupation + a shared
+  distinctive word, or containing every word of the job); vague or unknown jobs
+  are never widened. Geography generated internally: USA, then 50 states + DC.
+- **`nexbase/discovery/registry.py`**: `SourceRegistry`, `Source`,
+  `SourceClass` (DIRECT / ATS / APIFY), `build_registry()`. JobSpy is the DIRECT
+  handler for indeed, linkedin, zip_recruiter, glassdoor, google; board adapters
+  for simplyhired, talent_com, postjobfree, monster; ats-scrapers for 10 ATS
+  slices; no APIFY sources yet. A second handler for a portal raises.
+  Per source: enabled state, min interval, call budget, error tracking,
+  metrics, provenance. Capped nationwide queries fan out to states.
+- `RawJob.provenance` / `NormalizedJob.provenance`; `jobs.provenance jsonb`
+  (additive schema change).
+- Settings: `PLANNER_MAX_TITLE_VARIANTS=5`, `SOURCES_DISABLED=monster`,
+  `SOURCE_MIN_INTERVAL_SECONDS=2.0`, `SOURCE_MAX_CALLS_PER_RUN=60`.
+- CLI: `sources`, `plan --sector --job`; `run` now takes `--sector --job` only.
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `DiscoveryConfig`, `build_config`, `DiscoveryProbe`, `is_nationwide`, nationwide aliases, `planner.record/close` | runner, api, cli | `test_user_controlled_discovery.py` (planning sections), `test_discovery.py` (3), `test_hardening.py` (sector/probe tests) | Plan: user input is Sector + Job only; the planner generates titles and geography |
+| Runner `_discover`, `_discover_from_plan`, `_ats_probe`, `_ats_discovery`, `_resolve_ats_sites`; `run(ats_params, jobspy_params, board_params)` | api, flows (already gone), tests | `test_hardening.py` probe/ATS tests | Discovery now runs through the registry. `_resolve_ats_sites` moved to `registry.attach_ats_company_sites` |
+| API run fields `raw_jobs`, `ats_params`, `jobspy_params`, `board_params`, `discovery`, `size_range`; `SizeRange`, `DiscoveryConfigRequest` | `/pipeline/run` | `test_hardening.py` (2 size-range tests) | Run input is `{sector, job}` |
+| CLI `run --term --location --freshness-days --min-employees --max-employees` | `cli.py` | `test_cli_exposes_the_band_per_run` | Same |
+| Settings `jobspy_default_sites`, `board_default_sites`, `ats_default_slices` (+ properties), `ats_max_probes`, `discovery_default_location` | jobspy/ats adapters, planner, runner, `live_smoke.py`, `sync_vault.py` | `test_discovery.py` (2), `test_hardening.py` (1) | Replaced by the registry catalog + `SOURCES_DISABLED` and the per-source call budget; one enabled/disabled mechanism |
+| `DISABLED_BOARD_SCRAPERS`, `build_board_scrapers` | runner, `live_smoke.py`, `sync_vault.py` | `test_discovery.py` (2) | `BOARD_SCRAPERS` lists every board adapter; Monster is off via `SOURCES_DISABLED` |
+
+### Changed
+
+- `tests/test_user_controlled_discovery.py` → `tests/test_discovery_coverage.py`
+  (coverage, pagination, JobSpy log capture and ATS slice-cache tests kept).
+- `ATSDiscovery.search` records per-slice failures in `.errors`, so a failed
+  slice reports `ERROR` instead of looking empty.
+- Logs go to **stderr**, so CLI JSON on stdout is parseable.
+- `/config/sectors` returns `suggested_jobs`.
+- `scripts/live_smoke.py` runs one query through every enabled registry source
+  (`--state` replaces `--location`); `scripts/sync_vault.py` reports the registry.
+
+### Not verified live
+
+No network run was made in this phase. Whether each portal accepts the
+nationwide `USA` scope and state names, and how often queries cap and fan out,
+is Phase 3's source verification.
+
+---
+
 ## Phase 1 — Cleanup & foundation (2026-09-16)
 
 Tests: 768 passed before, **709 passed** after (0 failed). 22 tests in
@@ -64,8 +120,8 @@ removed behaviour; the rest were updated to new signatures and rules.
 
 | Item | Phase |
 |---|---|
-| Run input still accepts search terms, location, size band and source lists (plan: Sector + Job only) | 2 |
-| `discovery/` not yet split into planner + source registry | 2 |
+| ~~Run input still accepts search terms, location, size band and source lists~~ | done in 2 |
+| ~~`discovery/` not yet split into planner + source registry~~ | done in 2 (as modules in `discovery/`) |
 | JobSpy defaults still include `zip_recruiter`, `glassdoor`, `google` | 3 |
 | Job dedup and company dedup run together, before freshness; P1/P2/P3 freshness tiers | 4 |
 | `contacts_for_review_companies=True` (plan: contact discovery on QUALIFIED only) | 6 |

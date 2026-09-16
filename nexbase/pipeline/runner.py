@@ -2,7 +2,7 @@
 
 Single entry point used by the API, the CLI and tests:
 
-    1 Discover jobs
+    1 Discover jobs: a USA-wide plan run through the source registry
     2 Normalize
     3 Deduplicate
     4 Freshness filter (<= 14 days)
@@ -39,18 +39,9 @@ from nexbase.core.enums import (
 )
 from nexbase.core.models import RawJob
 from nexbase.db.repository import InertRepository, SupabaseRepository
-from nexbase.discovery.ats_discovery import ATSDiscovery, ATSSliceCache
-from nexbase.discovery.board_scrapers import BOARD_SCRAPERS, build_board_scrapers
-from nexbase.discovery.jobspy_discovery import JobSpyDiscovery
 from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
-from nexbase.discovery.coverage import (
-    BUDGET_REACHED,
-    SOURCE_EXHAUSTED,
-    CoverageReport,
-    SourceOutcome,
-    classify_fetch_failure,
-)
-from nexbase.discovery.planner import DiscoveryPlan, DiscoveryPlanner
+from nexbase.discovery.planner import DiscoveryPlan
+from nexbase.discovery.registry import SourceRegistry, build_registry
 from nexbase.email.discovery import EmailDiscovery
 from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
 from nexbase.pipeline.dedupe import CompanyAggregate, Deduplicator
@@ -216,6 +207,7 @@ class PipelineRunner:
         access: AccessLayer | None = None,
         size_resolver: SizeResolver | None = None,
         domain_resolver=None,
+        registry: SourceRegistry | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         ensure_logging_configured(self.settings.log_level)
@@ -255,7 +247,9 @@ class PipelineRunner:
         #: Candidates too weak to attach, kept for a human decision.
         self._domain_review: dict[tuple[str, str], dict] = {}
         self._stop_at: str | None = None
-        self._ats_probes_run = 0
+        #: Built per run when not injected, so run-scoped state (the ATS slice
+        #: cache) never leaks between runs.
+        self._registry = registry
         self._contact_runs = 0
 
     def _audit(self, event: str, level: str = "INFO", **data) -> None:
@@ -266,18 +260,19 @@ class PipelineRunner:
     # ------------------------------------------------------------------
     def run(
         self,
-        raw_jobs: list[RawJob] | list[dict] | None = None,
-        ats_params: dict | None = None,
-        jobspy_params: dict | None = None,
-        board_params: dict | None = None,
         plan: DiscoveryPlan | None = None,
+        raw_jobs: list[RawJob] | list[dict] | None = None,
         profiles: dict[tuple[str, str], CompanyProfile] | None = None,
         now: datetime | None = None,
         stop_at: str | None = None,
         persist: bool = True,
         enrich_linkedin_signal: bool = False,
     ) -> PipelineReport:
-        """Run the pipeline. ``stop_at`` may be 'before_contacts'."""
+        """Run the pipeline for ``plan``.
+
+        ``raw_jobs`` replaces discovery with already-collected postings.
+        ``stop_at`` may be 'before_contacts'.
+        """
         self._stop_at = stop_at
         run_key = plan.run_key if plan is not None else (
             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -291,9 +286,6 @@ class PipelineRunner:
                 return self._run(
                     run_key=run_key,
                     raw_jobs=raw_jobs,
-                    ats_params=ats_params,
-                    jobspy_params=jobspy_params,
-                    board_params=board_params,
                     plan=plan,
                     profiles=profiles,
                     now=now,
@@ -309,9 +301,6 @@ class PipelineRunner:
         self,
         run_key,
         raw_jobs=None,
-        ats_params=None,
-        jobspy_params=None,
-        board_params=None,
         plan=None,
         profiles=None,
         now=None,
@@ -320,12 +309,7 @@ class PipelineRunner:
         report = PipelineReport(run_key=run_key)
         if plan is not None:
             report.plan = plan.to_dict()
-        self._ats_probes_run = 0
         self._contact_runs = 0
-        # Each ATS slice is downloaded once per run. Without this the same
-        # jobs.parquet was fetched once per probe - measured live at 4x for
-        # ashby, paylocity and bamboohr in a single three-term run.
-        self._ats_slice_cache = ATSSliceCache(self.log)
         now = now or datetime.now(timezone.utc)
         self._audit("PIPELINE_START")
 
@@ -333,10 +317,15 @@ class PipelineRunner:
         with stage(self.log, "discovery", report.stages):
             if raw_jobs is not None:
                 raw = [r if isinstance(r, RawJob) else RawJob.from_dict(r) for r in raw_jobs]
+            elif plan is not None:
+                registry = self._registry or build_registry(
+                    self.settings, access=self.access, logger=self.log)
+                discovered = registry.run(plan, repo=self.repo)
+                raw = discovered.jobs
+                report.source_status = discovered.source_status
+                report.coverage = discovered.coverage.as_dict()
             else:
-                # No plan is built here. Discovery runs what was asked for:
-                # a plan, or explicit per-source params.
-                raw = self._discover(ats_params, jobspy_params, board_params, plan, report)
+                raw = []
 
             if enrich_linkedin_signal and raw:
                 try:
@@ -521,297 +510,6 @@ class PipelineRunner:
             report.qualified.append(lead)
         else:
             report.needs_review.append(lead)
-
-    # ------------------------------------------------------------------
-    # Discovery
-    # ------------------------------------------------------------------
-    def _discover(
-        self, ats_params, jobspy_params, board_params, plan, report
-    ) -> list[RawJob]:
-        raw: list[RawJob] = []
-
-        if plan is not None:
-            raw.extend(self._discover_from_plan(plan, report))
-            return raw
-
-        if ats_params:
-            try:
-                raw.extend(self._ats_discovery().search(**ats_params))
-            except Exception as exc:
-                report.append_pitfall(stage="ATS_DISCOVERY", reason=str(exc))
-                self.log.error("ats_discovery_error", error=str(exc))
-
-        if jobspy_params:
-            try:
-                raw.extend(JobSpyDiscovery(self.settings, self.log).search(**jobspy_params))
-            except Exception as exc:
-                report.append_pitfall(stage="JOBSPY_DISCOVERY", reason=str(exc))
-                self.log.error("jobspy_discovery_error", error=str(exc))
-
-        if board_params:
-            try:
-                names = board_params.get("boards") or self.settings.board_sites
-                for scraper in build_board_scrapers(names, access=self.access, logger=self.log):
-                    raw.extend(
-                        scraper.search(
-                            search_terms=board_params["search_terms"],
-                            locations=board_params["locations"],
-                            pages=board_params.get("pages", 1),
-                            client_industry=board_params.get("client_industry"),
-                        )
-                    )
-            except Exception as exc:
-                report.append_pitfall(stage="BOARD_DISCOVERY", reason=str(exc))
-                self.log.error("board_discovery_error", error=str(exc))
-
-        return raw
-
-    def _discover_from_plan(self, plan: DiscoveryPlan, report) -> list[RawJob]:
-        """Execute the operator's plan, one probe at a time.
-
-        A probe is a ``(search_term, location)`` PAIR the operator chose. Each
-        probe is executed exactly once per source and gets its own
-        ``discovery_runs`` row, so the audit trail records the query that ran.
-
-        Each source is asked for as much as it will give within the plan's
-        coverage budget, and records why it stopped.
-        """
-        planner = DiscoveryPlanner(self.settings, repo=self.repo, logger=self.log)
-        jobspy = JobSpyDiscovery(self.settings, self.log)
-        raw: list[RawJob] = []
-        board_names = plan.board_sites or self.settings.board_sites
-        status: dict[str, dict] = {}
-        coverage = CoverageReport()
-
-        def note(source, jobs=0, error=None):
-            row = status.setdefault(
-                source, {"jobs": 0, "calls": 0, "errors": 0, "last_error": None}
-            )
-            row["calls"] += 1
-            row["jobs"] += jobs
-            if error:
-                row["errors"] += 1
-                row["last_error"] = error
-
-        for probe in plan.probes:
-            # The sector the operator selected, carried as *search intent*. It
-            # is never asserted as a fact about the employer.
-            intent = probe.client_industry or None
-            terms, locations = [probe.search_term], [probe.location]
-
-            run_id = planner.record(plan, probe, source="jobspy")
-            try:
-                found = jobspy.search(
-                    search_terms=terms, locations=locations, site_names=plan.sites,
-                    hours_old=plan.hours_old, client_industry=intent,
-                    results_wanted=plan.max_results_per_query,
-                )
-                raw.extend(found)
-                planner.close(run_id, len(found))
-                for outcome in getattr(jobspy, "last_outcomes", []):
-                    coverage.add(outcome)
-                for site, site_status in getattr(jobspy, "site_status", {}).items():
-                    note(f"jobspy:{site}", site_status["jobs"])
-                    if site_status["last_error"]:
-                        note(f"jobspy:{site}", error=site_status["last_error"])
-            except Exception as exc:
-                planner.close(run_id, 0, status="FAILED", error=str(exc))
-                note("jobspy", error=str(exc))
-                coverage.add(SourceOutcome(
-                    source="jobspy", query=probe.search_term,
-                    location_scope=probe.location, stop_reason="ERROR",
-                    error_type=type(exc).__name__, error_message=str(exc)))
-                report.append_pitfall(
-                    stage="JOBSPY_DISCOVERY", term=probe.search_term, reason=str(exc)
-                )
-
-            for scraper in build_board_scrapers(
-                board_names, access=self.access, logger=self.log
-            ):
-                site = scraper.config.site
-                run_id = planner.record(plan, probe, source=site)
-                try:
-                    found = scraper.search(
-                        search_terms=terms, locations=locations,
-                        pages=plan.max_pages_per_query,
-                        max_results=plan.max_results_per_query,
-                        client_industry=intent,
-                    )
-                    raw.extend(found)
-                    outcomes = getattr(scraper, "last_outcomes", [])
-                    for outcome in outcomes:
-                        coverage.add(outcome)
-                    planner.close(run_id, len(found),
-                                  outcome=outcomes[-1] if outcomes else None)
-                    note(f"board:{site}", len(found))
-                except Exception as exc:
-                    planner.close(run_id, 0, status="FAILED", error=str(exc))
-                    note(f"board:{site}", error=str(exc))
-                    coverage.add(SourceOutcome(
-                        source=f"board:{site}", query=probe.search_term,
-                        location_scope=probe.location, stop_reason="ERROR",
-                        error_type=type(exc).__name__, error_message=str(exc)))
-                    report.append_pitfall(
-                        stage="BOARD_DISCOVERY", source=site,
-                        term=probe.search_term, reason=str(exc),
-                    )
-
-            ats_found = self._ats_probe(plan, probe, planner, report, coverage)
-            raw.extend(ats_found)
-            if plan.ats_slices:
-                note("ats", len(ats_found))
-
-        for source, row in status.items():
-            row["outcome"] = (
-                "ERROR" if row["errors"] and not row["jobs"]
-                else "SUCCESS" if row["jobs"] else "EMPTY"
-            )
-        report.source_status = status
-        report.coverage = coverage.as_dict()
-        self.log.info("source_status", **{k: v["outcome"] for k, v in status.items()})
-        for source, row in coverage.by_source().items():
-            self.log.info(
-                "source_coverage", source=source, queries=row["queries"],
-                pages=row["pages"], returned=row["jobs_returned"],
-                accepted=row["jobs_accepted"], duplicates=row["duplicates"],
-                stop_reasons=row["stop_reasons"],
-                limited_by_nexbase=row["limited_by_nexbase"],
-            )
-        self.log.info(
-            "plan_discovery_complete",
-            probes=len(plan.probes), sources=len(board_names) + 2, raw_jobs=len(raw),
-        )
-        return raw
-
-    def _ats_probe(self, plan, probe, planner, report, coverage=None) -> list[RawJob]:
-        """Run one planned probe against the ATS slices.
-
-        The operator's own search term and location drive the query, so an ATS
-        row is attributable to the search that found it. ``ats_scrapers`` has no
-        ``hours_old``; the normal freshness filter handles that downstream, and
-        that limitation is recorded rather than worked around.
-        """
-        if not plan.ats_slices:
-            return []
-        if self._ats_probes_run >= self.settings.ats_max_probes:
-            # Our budget, not the dataset's. Recorded as such.
-            if coverage is not None:
-                coverage.add(SourceOutcome(
-                    source="ats", query=probe.search_term,
-                    location_scope=probe.location, stop_reason=BUDGET_REACHED,
-                    error_message=(
-                        f"ats_max_probes={self.settings.ats_max_probes} reached"),
-                ))
-            return []
-        self._ats_probes_run += 1
-
-        run_id = planner.record(plan, probe, source="ats")
-        intent = probe.client_industry or None
-        try:
-            from nexbase.discovery.ats_discovery import ats_location_filter
-
-            state = ats_location_filter(probe.location)
-            found = self._ats_discovery().search(
-                # "Columbus, OH" matches almost nothing in the ATS dataset, and
-                # a nationwide scope has no state to narrow to at all; both mean
-                # no location filter rather than an invented one.
-                query=probe.search_term, location=state,
-                ats=plan.ats_slices, limit=plan.max_results_per_query,
-                client_industry=intent,
-            )
-            self._resolve_ats_sites(found)
-            outcome = SourceOutcome(
-                source="ats", query=probe.search_term,
-                location_scope=probe.location, jobs_returned=len(found),
-                jobs_accepted=len(found),
-                stop_reason=(BUDGET_REACHED
-                             if len(found) >= plan.max_results_per_query
-                             else SOURCE_EXHAUSTED),
-            )
-            if coverage is not None:
-                coverage.add(outcome)
-            planner.close(run_id, len(found), outcome=outcome)
-            return found
-        except Exception as exc:
-            planner.close(run_id, 0, status="FAILED", error=str(exc))
-            if coverage is not None:
-                coverage.add(SourceOutcome(
-                    source="ats", query=probe.search_term,
-                    location_scope=probe.location, stop_reason="ERROR",
-                    error_type=type(exc).__name__, error_message=str(exc)))
-            report.append_pitfall(
-                stage="ATS_DISCOVERY", term=probe.search_term, reason=str(exc)
-            )
-            return []
-
-    def _ats_discovery(self) -> ATSDiscovery:
-        """An ATS client bound to this run's slice cache."""
-        return ATSDiscovery(self.settings, self.log,
-                            slice_cache=getattr(self, "_ats_slice_cache", None))
-
-    def _resolve_ats_sites(self, jobs: list[RawJob]) -> None:
-        """Fill company websites for ATS rows from the packaged company directory.
-
-        The ATS jobs dataset has no website column, so without this every
-        ATS-sourced company is domain-less. Only URLs that normalize to a real
-        employer domain are attached - a greenhouse.io careers link identifies
-        the platform, so it is left null rather than guessed at.
-        """
-        if not self.settings.ats_resolve_company_sites:
-            return
-        names = sorted({j.company_name for j in jobs if j.company_name and not j.company_website})
-        if not names:
-            return
-        # The directory publishes no location for every row, but the posting
-        # does - pass it so a same-named firm elsewhere can be ruled out.
-        locations = {}
-        for job in jobs:
-            if job.company_name and job.location:
-                locations.setdefault(job.company_name, job.location)
-        try:
-            sites = self._ats_discovery().resolve_company_sites(
-                names, locations=locations)
-        except Exception as exc:
-            self.log.warning("ats_company_sites_error", error=str(exc))
-            return
-        from nexbase.pipeline.normalize import normalize_domain
-
-        attached = ambiguous = renamed = 0
-        for job in jobs:
-            match = sites.get(job.company_name or "")
-            if not match:
-                continue
-            # Why this URL was believed - or why it was not - travels with the
-            # job, so a wrong attachment is traceable rather than silent.
-            job.raw = dict(job.raw or {})
-            job.raw["ats_company_match"] = {
-                "source": "ATS_DIRECTORY", "status": match["status"],
-                "matched_name": match.get("matched_name"),
-                "name_similarity": match.get("similarity"),
-                "location_match": match.get("location_match"),
-                "confidence": match.get("confidence"),
-                "reason": match.get("reason"),
-                "url": match.get("url"),
-            }
-            if match["status"] != "MATCHED":
-                if match["status"] == "AMBIGUOUS":
-                    ambiguous += 1
-                continue
-            # The jobs dataset stores the ATS tenant slug, so the employer
-            # reaches the pipeline as "componentrepairtechnologies". The
-            # directory publishes the real name; adopt it so the dedup key,
-            # the domain search and the lead a human reads all use it.
-            matched_name = str(match.get("matched_name") or "").strip()
-            if matched_name and matched_name.lower() != (job.company_name or "").lower():
-                job.raw["ats_company_slug"] = job.company_name
-                job.company_name = matched_name
-                renamed += 1
-            if not normalize_domain(match["url"] or ""):
-                continue
-            job.company_website = match["url"]
-            attached += 1
-        self.log.info("ats_company_sites_attached", requested=len(names),
-                      attached=attached, ambiguous=ambiguous, renamed=renamed)
 
     # ------------------------------------------------------------------
     def _build_profiles(self, fresh, provided, now=None) -> dict[tuple[str, str], CompanyProfile]:
@@ -1198,6 +896,7 @@ class PipelineRunner:
                     "source_priority": job.source_priority,
                     "last_seen_at": datetime.now(timezone.utc).isoformat(),
                     "raw_payload": _json_safe(job.raw),
+                    "provenance": _json_safe(job.provenance) or None,
                 }
             )
             if job.posting_date:

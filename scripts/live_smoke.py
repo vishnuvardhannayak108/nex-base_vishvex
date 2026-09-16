@@ -4,8 +4,10 @@ Reports what each source actually did, including the ones that fail. A source
 that returns nothing is reported as empty, not quietly omitted, and no
 workaround is applied on its behalf.
 
+Every enabled source in the registry runs one query through its own adapter.
+
     python scripts/live_smoke.py
-    python scripts/live_smoke.py --term "warehouse associate" --location "Columbus, OH"
+    python scripts/live_smoke.py --term "warehouse associate" --state OH
     python scripts/live_smoke.py --json report.json
 """
 from __future__ import annotations
@@ -73,7 +75,8 @@ def _source_row(name: str, jobs: list[RawJob], error: str | None,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--term", default="warehouse associate")
-    parser.add_argument("--location", default="Columbus, OH")
+    parser.add_argument("--state", default=None,
+                        help="two-letter state code; nationwide when omitted")
     parser.add_argument("--hours-old", type=int, default=336)
     parser.add_argument("--json", dest="json_path", default=None)
     parser.add_argument("--contact-sample", type=int, default=3,
@@ -88,56 +91,25 @@ def main() -> int:
     all_jobs: list[RawJob] = []
     started = time.monotonic()
 
-    # ---- JobSpy, one site at a time so a failure is attributable ----------
-    from nexbase.discovery.jobspy_discovery import JobSpyDiscovery
+    # ---- Every enabled registry source, one query each ---------------------
+    from nexbase.discovery.planner import NATIONWIDE, US_STATES, TitleVariant
+    from nexbase.discovery.registry import FAILED, SourceQuery, build_registry
 
-    for site in settings.jobspy_sites:
+    geo = next((g for g in US_STATES if g.code == (args.state or "").upper()), NATIONWIDE)
+    query = SourceQuery(TitleVariant(args.term, "INPUT"), geo, "", args.hours_old)
+    for source in build_registry(settings, access=access).sources():
+        if not source.enabled:
+            continue
         t0 = time.monotonic()
         error = None
         jobs: list[RawJob] = []
         try:
-            jobs = JobSpyDiscovery(settings).search(
-                search_terms=[args.term], locations=[args.location],
-                site_names=[site], hours_old=args.hours_old,
-            )
+            jobs, outcome = source.adapter(query)
+            if outcome.stop_reason in FAILED:
+                error = outcome.error_message or outcome.stop_reason
         except Exception as exc:  # reported, never worked around
             error = f"{type(exc).__name__}: {exc}"
-        rows.append(_source_row(f"jobspy:{site}", jobs, error,
-                                time.monotonic() - t0, settings, now))
-        all_jobs.extend(jobs)
-
-    # ---- Own board adapters ----------------------------------------------
-    from nexbase.discovery.board_scrapers import build_board_scrapers
-
-    for scraper in build_board_scrapers(settings.board_sites, access=access):
-        t0 = time.monotonic()
-        error = None
-        jobs = []
-        try:
-            jobs = scraper.search(
-                search_terms=[args.term], locations=[args.location], pages=1
-            )
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        rows.append(_source_row(f"board:{scraper.config.site}", jobs, error,
-                                time.monotonic() - t0, settings, now))
-        all_jobs.extend(jobs)
-
-    # ---- ATS slices, with the planned query and location -----------------
-    from nexbase.discovery.ats_discovery import ATSDiscovery
-
-    for slice_name in settings.ats_slices:
-        t0 = time.monotonic()
-        error = None
-        jobs = []
-        try:
-            jobs = ATSDiscovery(settings).search(
-                query=args.term, location=args.location, ats=slice_name,
-                limit=settings.ats_results_per_probe,
-            )
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        rows.append(_source_row(f"ats:{slice_name}", jobs, error,
+        rows.append(_source_row(source.id, jobs, error,
                                 time.monotonic() - t0, settings, now))
         all_jobs.extend(jobs)
 
@@ -176,7 +148,7 @@ def main() -> int:
 
     report = {
         "generated_at": now.isoformat(),
-        "query": {"term": args.term, "location": args.location,
+        "query": {"term": args.term, "location": geo.name,
                   "hours_old": args.hours_old},
         "totals": {
             "jobs_returned": len(all_jobs),

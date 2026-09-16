@@ -366,6 +366,9 @@ class ATSDiscovery:
             client = None
 
         records: list[RawJob] = []
+        #: Per-slice failures from the last search. A failed slice is skipped,
+        #: not fatal, so the caller needs this to tell failure from "empty".
+        self.errors: list[str] = []
         dropped_out_of_state = 0
         for slice_name in slices:
             info = self.slice_info(slice_name) if slice_name else None
@@ -398,6 +401,7 @@ class ATSDiscovery:
                 )
             except Exception as exc:
                 self.log.error("ats_search_error", ats=slice_name, error=str(exc))
+                self.errors.append(f"{slice_name}: {exc}")
                 continue
 
             if (df is None or df.empty) and state:
@@ -418,6 +422,7 @@ class ATSDiscovery:
                     except Exception as exc:
                         self.log.error("ats_search_error", ats=slice_name,
                                        error=str(exc))
+                        self.errors.append(f"{slice_name}: {exc}")
                         continue
 
             if df is None or df.empty:
@@ -446,14 +451,11 @@ class ATSDiscovery:
             if self.settings.ats_allow_full_snapshot:
                 self.log.warning("ats_full_snapshot_enabled", note="~16.9GB download")
                 return [None]
-            slices = self.settings.ats_slices
-            if not slices:
-                raise DiscoveryError(
-                    "ATS search requires an `ats` slice. Searching the full "
-                    "snapshot downloads ~16.9 GB; set ATS_ALLOW_FULL_SNAPSHOT=true "
-                    "to opt in, or configure ATS_DEFAULT_SLICES."
-                )
-            return list(slices)
+            raise DiscoveryError(
+                "ATS search requires an `ats` slice. Searching the full "
+                "snapshot downloads ~16.9 GB; set ATS_ALLOW_FULL_SNAPSHOT=true "
+                "to opt in."
+            )
         if isinstance(ats, str):
             return [ats]
         return list(ats)

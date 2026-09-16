@@ -14,7 +14,7 @@ aggregator hosts are rejected outright.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -277,6 +277,7 @@ class NormalizedJob:
     applicant_count: int | None
     observed_emails: list[str]
     raw: dict
+    provenance: dict = field(default_factory=dict)
 
     @property
     def evidence_url(self) -> str | None:
@@ -335,6 +336,7 @@ def normalize_job(raw: RawJob) -> NormalizedJob:
         applicant_count=raw.applicant_count,
         observed_emails=list(raw.observed_emails or []),
         raw=raw.raw or {},
+        provenance=dict(raw.provenance or {}),
     )
 
 

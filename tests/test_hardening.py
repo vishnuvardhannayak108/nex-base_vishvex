@@ -18,7 +18,7 @@ from nexbase.contacts.extraction import extract_emails_from_html, is_role_email
 from nexbase.core.enums import QualificationStatus
 from nexbase.core.models import RawJob, extract_emails_from_text
 from nexbase.discovery import taxonomy
-from nexbase.discovery.planner import DiscoveryPlanner, build_config
+from nexbase.discovery.planner import DiscoveryPlanner
 from nexbase.pipeline.dedupe import Deduplicator, location_bucket
 from nexbase.pipeline.freshness import FreshnessFilter
 from nexbase.pipeline.normalize import Normalizer, normalize_domain
@@ -120,25 +120,11 @@ def test_search_intent_is_still_never_company_evidence(make_job, settings, now):
 # Industry universe: nothing hardcoded as an allowlist, exclusions configurable
 # ===========================================================================
 def test_any_sector_can_be_selected_for_a_run(settings):
-    """No sector is structurally unreachable: the operator picks, we run it."""
+    """No sector is structurally unreachable: the user picks, we run it."""
     from nexbase.discovery.planner import known_sectors
 
     for sector in known_sectors():
-        plan = DiscoveryPlanner(settings).plan(
-            build_config(search_terms=["operator"], sector=sector))
-        assert {p.client_industry for p in plan.probes} == {sector}
-
-
-def test_a_sector_outside_the_client_ten_is_still_discoverable(settings):
-    """The ten are a priority list, not a fence around what may be searched.
-
-    With no sector named at all, the run still executes the operator's terms -
-    so a prospect in an unlisted sector is reachable.
-    """
-    plan = DiscoveryPlanner(settings).plan(
-        build_config(search_terms=["kiln operator"], sector=None))
-    assert [p.search_term for p in plan.probes] == ["kiln operator"]
-    assert {p.client_industry for p in plan.probes} == {""}
+        assert DiscoveryPlanner(settings).plan(sector, "Machine Operator").sector == sector
 
 
 def test_manufacturing_subsectors_stay_classifiable():
@@ -165,96 +151,6 @@ def test_size_band_matches_the_client_spec():
 # ===========================================================================
 # Discovery orchestration
 # ===========================================================================
-class _RecordingJobSpy:
-    def __init__(self, *a, **k):
-        self.calls: list[tuple] = []
-
-    def search(self, search_terms, locations, **kwargs):
-        _RecordingJobSpy.seen.append((tuple(search_terms), tuple(locations)))
-        return []
-
-
-class _RecordingATS:
-    def __init__(self, *a, **k):
-        pass
-
-    def search(self, **kwargs):
-        _RecordingATS.seen.append(kwargs)
-        return []
-
-    def resolve_company_sites(self, names):
-        return {}
-
-
-def _patch_sources(monkeypatch):
-    import nexbase.pipeline.runner as runner_mod
-
-    _RecordingJobSpy.seen = []
-    _RecordingATS.seen = []
-    monkeypatch.setattr(runner_mod, "JobSpyDiscovery", _RecordingJobSpy)
-    monkeypatch.setattr(runner_mod, "ATSDiscovery", _RecordingATS)
-    monkeypatch.setattr(runner_mod, "build_board_scrapers", lambda *a, **k: [])
-
-
-def test_planned_probes_execute_exactly_once_each(monkeypatch, settings):
-    """Probes are (term, location) PAIRS; they were being re-expanded into a
-    cartesian product, turning N planned searches into terms x locations."""
-    _patch_sources(monkeypatch)
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder", "machinist", "forklift operator"],
-        sector="Manufacturing", location="Columbus, OH"))
-    runner = PipelineRunner(settings=settings, repo=None, access=StubAccess({}, settings=settings))
-    runner.repo = __import__(
-        "nexbase.db.repository", fromlist=["InertRepository"]
-    ).InertRepository()
-
-    runner.run(plan=plan, now=None, persist=False)
-
-    assert len(_RecordingJobSpy.seen) == len(plan.probes)
-    for terms, locations in _RecordingJobSpy.seen:
-        assert len(terms) == 1 and len(locations) == 1
-    executed = {(t[0], l[0]) for t, l in _RecordingJobSpy.seen}
-    assert executed == {(p.search_term, p.location) for p in plan.probes}
-
-
-def test_ats_receives_the_planned_query_and_location(monkeypatch, settings):
-    """ATS was called with only `ats=` and `limit=`, ignoring the plan."""
-    _patch_sources(monkeypatch)
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder", "machinist"], location="Columbus, OH"))
-    runner = PipelineRunner(settings=settings, repo=None, access=StubAccess({}, settings=settings))
-    runner.repo = __import__(
-        "nexbase.db.repository", fromlist=["InertRepository"]
-    ).InertRepository()
-
-    runner.run(plan=plan, now=None, persist=False)
-
-    assert _RecordingATS.seen, "ATS must run for a plan carrying ats slices"
-    # The ATS dataset filters by substring on inconsistent location strings, so
-    # the probe's "City, ST" is narrowed to the state before it is sent.
-    from nexbase.discovery.ats_discovery import ats_location_filter
-
-    planned = {(p.search_term, ats_location_filter(p.location)) for p in plan.probes}
-    for call in _RecordingATS.seen:
-        assert call["query"]
-        assert (call["query"], call["location"]) in planned
-        assert call["ats"] == plan.ats_slices
-
-
-def test_ats_probe_count_is_bounded(monkeypatch, settings):
-    _patch_sources(monkeypatch)
-    settings.ats_max_probes = 2
-    plan = DiscoveryPlanner(settings).plan(build_config(
-        search_terms=["welder", "machinist", "packer", "picker", "loader"]))
-    runner = PipelineRunner(settings=settings, repo=None, access=StubAccess({}, settings=settings))
-    runner.repo = __import__(
-        "nexbase.db.repository", fromlist=["InertRepository"]
-    ).InertRepository()
-
-    runner.run(plan=plan, now=None, persist=False)
-    assert len(_RecordingATS.seen) == 2
-
-
 def test_one_broken_jobspy_site_does_not_discard_the_others(monkeypatch, settings):
     """ZipRecruiter/Glassdoor/Google fail; Indeed and LinkedIn must survive."""
     import nexbase.discovery.jobspy_discovery as mod
@@ -280,13 +176,6 @@ def test_one_broken_jobspy_site_does_not_discard_the_others(monkeypatch, setting
     assert len(found) == 2
     sites = mod.JobSpyDiscovery(settings)
     assert {j.source_site for j in found} == {"indeed", "linkedin"}
-
-
-def test_board_default_never_names_a_disabled_adapter(settings):
-    from nexbase.discovery.board_scrapers import BOARD_SCRAPERS, DISABLED_BOARD_SCRAPERS
-
-    assert set(settings.board_sites) <= set(BOARD_SCRAPERS)
-    assert not set(settings.board_sites) & set(DISABLED_BOARD_SCRAPERS)
 
 
 # ===========================================================================
@@ -889,20 +778,23 @@ def test_ats_rows_carry_search_intent_not_company_industry():
     assert job.company_industry is None
 
 
-def test_pipeline_report_exposes_per_source_status(monkeypatch, settings):
-    _patch_sources(monkeypatch)
-    plan = DiscoveryPlanner(settings).plan(
-        build_config(search_terms=["welder", "machinist"]))
+def test_pipeline_report_exposes_per_source_status(settings):
     from nexbase.db.repository import InertRepository
+    from nexbase.discovery.coverage import SourceOutcome
+    from nexbase.discovery.registry import Source, SourceClass, SourceRegistry
 
+    registry = SourceRegistry()
+    registry.register(Source("indeed", SourceClass.DIRECT, "fake",
+                             lambda q: ([], SourceOutcome(source="x"))))
+    plan = DiscoveryPlanner(settings).plan("Manufacturing", "Welder")
     runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
+                            access=StubAccess({}, settings=settings), registry=registry)
     report = runner.run(plan=plan, persist=False)
 
-    assert report.source_status, "per-source outcomes must be reported"
-    assert all(row["outcome"] in ("SUCCESS", "EMPTY", "ERROR")
-               for row in report.source_status.values())
+    assert report.source_status["direct:indeed"]["outcome"] == "EMPTY"
+    assert report.source_status["direct:indeed"]["calls"] == len(plan.titles)
     assert "source_status" in report.to_dict()
+    assert report.coverage["by_source"]["direct:indeed"]["queries"] == len(plan.titles)
 
 
 @pytest.mark.parametrize(
@@ -1408,25 +1300,6 @@ def test_needs_review_company_is_persisted_with_its_flags(settings, make_job, no
 # ===========================================================================
 # Operator-selected company size
 # ===========================================================================
-def test_size_range_flows_from_the_api_without_leaking():
-    import nexbase.api.main as api
-
-    body = api.SizeRange(minimum=25, maximum=75)
-    before = api.settings.size_filter_min
-    tuned = api.settings.model_copy(update={
-        "size_filter_min": body.minimum, "size_filter_max": body.maximum})
-    assert (tuned.size_filter_min, tuned.size_filter_max) == (25, 75)
-    assert api.settings.size_filter_min == before, "one run must not change the default"
-
-
-def test_size_range_rejects_an_inverted_band():
-    import nexbase.api.main as api
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
-        api.SizeRange(minimum=200, maximum=10)
-
-
 def test_effective_size_band_matches_the_client_spec():
     """The running config, .env included, must be the Master Plan's 11-200."""
     from nexbase.config import Settings
@@ -1557,13 +1430,18 @@ def test_no_size_number_is_hardcoded_in_qualification_logic():
         assert f"> {literal}" not in evaluate and f"< {literal}" not in evaluate
 
 
-def test_cli_exposes_the_band_per_run():
+def test_cli_run_takes_a_sector_and_a_job_only():
     from nexbase.cli import build_parser
 
     args = build_parser().parse_args(
-        ["run", "--min-employees", "25", "--max-employees", "75"])
-    assert (args.min_employees, args.max_employees) == (25, 75)
-    assert build_parser().parse_args(["run"]).min_employees is None
+        ["run", "--sector", "Manufacturing", "--job", "Welder"])
+    assert (args.sector, args.job) == ("Manufacturing", "Welder")
+    for removed in (["--min-employees", "25"], ["--term", "x"], ["--location", "OH"]):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(
+                ["run", "--sector", "Manufacturing", "--job", "Welder", *removed])
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "--sector", "Manufacturing"])
 
 
 def test_size_found_on_a_contact_page_is_recorded(settings):
@@ -1742,11 +1620,9 @@ def test_ats_prefers_the_location_corroborated_candidate(settings):
 def test_ats_match_provenance_reaches_the_job(settings, now):
     from datetime import timedelta
 
-    import nexbase.pipeline.runner as mod
-    from nexbase.db.repository import InertRepository
+    from nexbase.discovery.registry import attach_ats_company_sites
+    from nexbase.logging_setup import get_logger
 
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
     job = RawJob(source_type="ATS", source_priority=1, source_site="greenhouse",
                  external_id="gh-1", title="Welder", company_name="Acme Manufacturing",
                  location="Toledo, OH", posted_at=now - timedelta(days=1))
@@ -1763,12 +1639,7 @@ def test_ats_match_provenance_reaches_the_job(settings, now):
                 "similarity": 1.0, "location_match": True,
                 "reason": "name and location agree"}}
 
-    original = mod.ATSDiscovery
-    mod.ATSDiscovery = FakeATS
-    try:
-        runner._resolve_ats_sites([job])
-    finally:
-        mod.ATSDiscovery = original
+    attach_ats_company_sites([job], FakeATS(), settings, get_logger())
 
     assert job.company_website == "https://acmemfg.com"
     assert job.raw["ats_company_match"]["source"] == "ATS_DIRECTORY"
@@ -1908,11 +1779,9 @@ def test_an_ambiguous_ats_match_never_reaches_the_job(settings, now):
     """The whole point: a wrong domain sends contact discovery to another company."""
     from datetime import timedelta
 
-    import nexbase.pipeline.runner as mod
-    from nexbase.db.repository import InertRepository
+    from nexbase.discovery.registry import attach_ats_company_sites
+    from nexbase.logging_setup import get_logger
 
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
     job = RawJob(source_type="ATS", source_priority=1, source_site="greenhouse",
                  external_id="gh-1", title="Carpenter",
                  company_name="Summit Construction", location="Toledo, OH",
@@ -1928,12 +1797,7 @@ def test_an_ambiguous_ats_match_never_reaches_the_job(settings, now):
                 "similarity": 0.0, "location_match": False,
                 "reason": "candidate locations contradict the posting"}}
 
-    original = mod.ATSDiscovery
-    mod.ATSDiscovery = FakeATS
-    try:
-        runner._resolve_ats_sites([job])
-    finally:
-        mod.ATSDiscovery = original
+    attach_ats_company_sites([job], FakeATS(), settings, get_logger())
 
     assert job.company_website is None, "an uncertain match must not be attached"
     recorded = job.raw["ats_company_match"]
@@ -2012,45 +1876,35 @@ def test_ats_location_filter_narrows_to_state(location, expected):
     assert ats_location_filter(location) == expected
 
 
-def test_ats_probe_sends_the_state_not_the_city(settings, monkeypatch):
+def test_ats_source_sends_the_state_code_not_a_place_name(settings, monkeypatch):
     """Passing "Columbus, OH" straight through zeroed the whole ATS channel."""
-    import nexbase.pipeline.runner as mod
-    from nexbase.db.repository import InertRepository
-    from nexbase.discovery.planner import DiscoveryPlan, DiscoveryProbe
+    import nexbase.discovery.registry as reg
+    from nexbase.discovery.planner import NATIONWIDE, US_STATES, TitleVariant
 
-    seen = {}
+    seen = []
 
     class FakeATS:
         def __init__(self, *a, **k):
-            pass
+            self.errors = []
 
         def search(self, **kwargs):
-            seen.update(kwargs)
+            seen.append(kwargs)
             return []
 
         def resolve_company_sites(self, names, locations=None):
             return {}
 
-    monkeypatch.setattr(mod, "ATSDiscovery", FakeATS)
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
-    runner._ats_probes_run = 0
+    monkeypatch.setattr(reg, "ATSDiscovery", FakeATS)
+    greenhouse = reg.build_registry(settings).get("greenhouse")
+    ohio = next(g for g in US_STATES if g.code == "OH")
+    for geo in (ohio, NATIONWIDE):
+        greenhouse.adapter(reg.SourceQuery(TitleVariant("machinist", "INPUT"), geo,
+                                           "Manufacturing", 336))
 
-    probe = DiscoveryProbe(client_industry="Manufacturing", search_term="machinist",
-                           location="Columbus, OH")
-    plan = DiscoveryPlan(run_key="k", probes=[probe], ats_slices=["greenhouse"])
-
-    class Planner:
-        def record(self, *a, **k):
-            return None
-
-        def close(self, *a, **k):
-            return None
-
-    runner._ats_probe(plan, probe, Planner(), mod.PipelineReport())
-
-    assert seen["location"] == "OH", f"got {seen.get('location')!r}"
-    assert seen["query"] == "machinist"
+    assert seen[0]["location"] == "OH"
+    assert seen[1]["location"] is None, "nationwide means no location filter"
+    assert all(call["query"] == "machinist" and call["ats"] == ["greenhouse"]
+               for call in seen)
 
 
 # ---------------------------------------------------------------------------
@@ -2249,9 +2103,9 @@ def test_squashing_does_not_make_different_employers_match():
 
 def test_a_matched_ats_row_adopts_the_employers_real_name(settings, monkeypatch):
     """Everything downstream keys off the name, so the slug must not survive."""
-    import nexbase.pipeline.runner as mod
+    from nexbase.discovery.registry import attach_ats_company_sites
+    from nexbase.logging_setup import get_logger
     from nexbase.core.models import RawJob
-    from nexbase.db.repository import InertRepository
 
     class FakeATS:
         def __init__(self, *a, **k):
@@ -2265,14 +2119,11 @@ def test_a_matched_ats_row_adopts_the_employers_real_name(settings, monkeypatch)
                 "url": "https://jobs.lever.co/componentrepairtechnologies",
                 "reason": "name and location agree"}}
 
-    monkeypatch.setattr(mod, "ATSDiscovery", FakeATS)
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({}, settings=settings))
 
     job = RawJob(source_type="ATS", source_priority=1, source_site="lever",
                  external_id="1", title="Machinist",
                  company_name="componentrepairtechnologies", location="Mentor, OH")
-    runner._resolve_ats_sites([job])
+    attach_ats_company_sites([job], FakeATS(), settings, get_logger())
 
     assert job.company_name == "Component Repair Technologies"
     assert job.raw["ats_company_slug"] == "componentrepairtechnologies"

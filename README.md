@@ -18,7 +18,8 @@ stay null.
 ```
 USER (Sector + Job)
   -> USA-wide planner ................ nexbase/discovery/planner.py, taxonomy.py
-  -> Direct / ATS / Apify sources .... nexbase/discovery/jobspy_discovery.py,
+  -> Source registry ................. nexbase/discovery/registry.py
+     Direct / ATS / Apify sources .... nexbase/discovery/jobspy_discovery.py,
                                        board_scrapers.py, ats_discovery.py
   -> Normalization ................... nexbase/pipeline/normalize.py
   -> Job deduplication ............... nexbase/pipeline/dedupe.py
@@ -50,7 +51,7 @@ Shared infrastructure:
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Cleanup, config, schema, logging/observability skeleton | **done** |
-| 2 | USA-wide planner + source registry | pending |
+| 2 | USA-wide planner + source registry | **done** |
 | 3 | Direct sources + ATS + JobSpy cleanup | pending |
 | 4 | Normalization, dedup, freshness | pending (existing code runs) |
 | 5 | Qualification engine | pending (existing code runs) |
@@ -59,9 +60,40 @@ Shared infrastructure:
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
-The runner currently executes: discover -> normalize -> dedupe -> freshness ->
+The runner currently executes: plan -> registry discovery -> normalize -> dedupe -> freshness ->
 qualify -> resolve domains -> free contact discovery + ranking. Paid enrichment
 and email verification are **not called** until their budget logic exists.
+
+## Planner and source registry
+
+**Planner** (`DiscoveryPlanner().plan(sector, job)`): the only inputs.
+
+- *Title variants* (up to `PLANNER_MAX_TITLE_VARIANTS`, the job first): other
+  O*NET titles in the same occupation that share a distinctive word with the job,
+  or that contain every word of it. "Welder" -> MIG Welder, TIG Welder, Welder
+  Fitter. A vague ("Supervisor") or unknown job is searched as typed.
+- *Geography*: the whole USA, then the 50 states + DC as the fallback partition.
+
+**Registry** (`build_registry()`): one handler per portal; a second raises.
+
+| Class | Portals | Handler |
+|---|---|---|
+| DIRECT | indeed, linkedin, zip_recruiter, glassdoor, google | JobSpy |
+| DIRECT | simplyhired, talent_com, postjobfree, monster (off) | NexBase board adapters |
+| ATS | greenhouse, lever, ashby, workable, smartrecruiters, bamboohr, breezy, jazzhr, recruitee, paylocity | ats-scrapers |
+| APIFY | none registered yet | - |
+
+Every source has: enabled/disabled state (`SOURCES_DISABLED`), a minimum
+interval between calls (`SOURCE_MIN_INTERVAL_SECONDS`, DIRECT/APIFY), a per-run
+call budget (`SOURCE_MAX_CALLS_PER_RUN`), error tracking and metrics (reported
+in `source_status` and `coverage`), and provenance stamped on every job (run,
+source, class, handler, portal, title, geography, fetched_at), persisted in
+`jobs.provenance` and `discovery_runs`.
+
+Execution per source: every title nationwide first; a query that comes back
+capped (`BUDGET_REACHED` / `SOURCE_LIMIT_REACHED`) fans out to all 51 state
+cells, until the call budget is spent. Failed queries never fan out. One broken
+source never stops the others.
 
 ---
 
@@ -79,8 +111,10 @@ python -m nexbase.cli db health
 ```bash
 python -m nexbase.cli db apply-schema                 # idempotent, additive
 python -m nexbase.cli db health                       # every table reachable
-python -m nexbase.cli sectors --sector Manufacturing  # sectors + title variants
-python -m nexbase.cli run --sector Manufacturing --term "Warehouse Manager" --dry-run
+python -m nexbase.cli sectors --sector Manufacturing  # sectors + suggested jobs
+python -m nexbase.cli sources                         # registry: class, handler, enabled
+python -m nexbase.cli plan --sector Manufacturing --job "Warehouse Manager"
+python -m nexbase.cli run --sector Manufacturing --job "Warehouse Manager" --dry-run
 python -m nexbase.cli run ... --stop-at before_contacts
 python -m nexbase.cli export leads.csv --status QUALIFIED
 ```
@@ -94,7 +128,7 @@ uvicorn nexbase.api.main:app --reload
 | Endpoint | Auth |
 |---|---|
 | `GET /health` | public |
-| `POST /pipeline/run` | `X-API-Key` |
+| `POST /pipeline/run` `{"sector", "job"}` | `X-API-Key` |
 | `GET /leads` | `X-API-Key` |
 | `GET /companies/{id}/emails` | `X-API-Key` |
 | `GET /config/sectors` | `X-API-Key` |
@@ -143,7 +177,7 @@ python -m pytest -m network   # the one live integration guard, opt-in
 
 ## Regenerating the taxonomy
 
-`nexbase/discovery/data/*.csv` are generated from the BLS/NAICS/O*NET extracts in
+`nexbase/discovery/data/*.csv` (the planner's taxonomy) are generated from the BLS/NAICS/O*NET extracts in
 `data/`:
 
 ```bash

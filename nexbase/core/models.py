@@ -58,6 +58,9 @@ class RawJob:
     # Emails the source itself surfaced (never guessed).
     observed_emails: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    #: Which registered source, handler and planned query produced this row.
+    #: Stamped by the source registry; empty for injected rows.
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Harvest addresses the posting itself published.
@@ -116,6 +119,7 @@ class RawJob:
             applicant_count=_coerce_int(data.get("applicant_count")),
             observed_emails=list(emails),
             raw=data.get("raw", data),
+            provenance=dict(data.get("provenance") or {}),
         )
 
 

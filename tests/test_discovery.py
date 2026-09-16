@@ -1,4 +1,4 @@
-"""Discovery: taxonomy, industry-mix planning, JobSpy mapping, board scrapers."""
+"""Discovery: taxonomy, JobSpy mapping, ATS guardrails, board scrapers."""
 from __future__ import annotations
 
 import pytest
@@ -14,7 +14,6 @@ from nexbase.discovery.board_scrapers import (
 )
 from nexbase.discovery.jobspy_discovery import SUPPORTED_SITES, JobSpyDiscovery
 from nexbase.discovery.linkedin_signal import parse_applicant_count
-from nexbase.discovery.planner import DiscoveryPlanner, build_config
 
 
 # ---------------------------------------------------------------------------
@@ -72,38 +71,8 @@ def test_industry_reverse_lookup():
 
 
 # ---------------------------------------------------------------------------
-# Planning: the operator's configuration, executed verbatim
-# ---------------------------------------------------------------------------
-def test_plan_tags_probes_with_the_selected_sector(settings):
-    config = build_config(search_terms=["welder", "machinist"],
-                          sector="Manufacturing")
-    plan = DiscoveryPlanner(settings).plan(config)
-    assert plan.run_key
-    assert {p.client_industry for p in plan.probes} == {"Manufacturing"}
-    assert all(p.search_term and p.location for p in plan.probes)
-
-
-def test_plan_defaults_hours_old_to_the_freshness_ceiling(settings):
-    plan = DiscoveryPlanner(settings).plan(build_config(search_terms=["welder"]))
-    assert plan.hours_old == settings.freshness_max_days * 24
-
-
-def test_plan_probe_keys_are_stable(settings):
-    """No sampling, no seed: the same configuration is the same plan."""
-    config = build_config(search_terms=["welder", "machinist"], sector="Construction")
-    a = DiscoveryPlanner(settings).plan(config)
-    b = DiscoveryPlanner(settings).plan(config)
-    assert [p.key for p in a.probes] == [p.key for p in b.probes]
-
-
-# ---------------------------------------------------------------------------
 # JobSpy mapping
 # ---------------------------------------------------------------------------
-def test_glassdoor_included_by_default(settings):
-    assert "glassdoor" in settings.jobspy_sites
-    assert set(settings.jobspy_sites) <= SUPPORTED_SITES
-
-
 def test_monster_and_simplyhired_are_not_jobspy_sites():
     """Verified against the installed package: JobSpy has no such scrapers."""
     assert "monster" not in SUPPORTED_SITES
@@ -159,15 +128,9 @@ def test_unsupported_sites_are_filtered(settings, caplog):
 def test_full_snapshot_refused_without_optin(settings):
     from nexbase.config import Settings
 
-    strict = Settings(ats_allow_full_snapshot=False, ats_default_slices="")
+    strict = Settings(ats_allow_full_snapshot=False)
     with pytest.raises(DiscoveryError, match="16.9 GB"):
         ATSDiscovery(strict)._resolve_slices(None)
-
-
-def test_named_slices_used_by_default(settings):
-    slices = ATSDiscovery(settings)._resolve_slices(None)
-    assert slices == settings.ats_slices
-    assert None not in slices
 
 
 def test_explicit_slice_respected(settings):
@@ -317,11 +280,12 @@ def test_unparseable_age_is_none_not_a_guess(text):
 
 def test_monster_is_disabled_after_live_failure():
     """Fetches fine but serves no job rows; enabling it would yield silent zeros."""
-    from nexbase.discovery.board_scrapers import BOARD_SCRAPERS, DISABLED_BOARD_SCRAPERS
+    from nexbase.config import Settings
+    from nexbase.discovery.registry import build_registry
 
-    assert "monster" not in BOARD_SCRAPERS
-    assert "monster" in DISABLED_BOARD_SCRAPERS
-    assert "simplyhired" in BOARD_SCRAPERS
+    registry = build_registry(Settings(_env_file=None))
+    assert registry.get("monster").enabled is False
+    assert registry.get("simplyhired").enabled is True
 
 
 # ---------------------------------------------------------------------------
@@ -364,9 +328,13 @@ def test_talent_com_search_url_paginates():
 
 
 def test_enabled_board_scrapers_are_the_verified_ones():
+    from nexbase.config import Settings
     from nexbase.discovery.board_scrapers import BOARD_SCRAPERS
+    from nexbase.discovery.registry import build_registry
 
-    assert set(BOARD_SCRAPERS) == {"simplyhired", "talent_com", "postjobfree"}
+    registry = build_registry(Settings(_env_file=None))
+    enabled = {portal for portal in BOARD_SCRAPERS if registry.get(portal).enabled}
+    assert enabled == {"simplyhired", "talent_com", "postjobfree"}
 
 
 # ---------------------------------------------------------------------------

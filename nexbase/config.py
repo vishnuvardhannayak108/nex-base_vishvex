@@ -127,30 +127,39 @@ class Settings(BaseSettings):
     host_failure_threshold: int = 3
 
     # ------------------------------------------------------------------
-    # Discovery sources
+    # USA-wide planner
     # ------------------------------------------------------------------
-    #: "USA" is nationwide United States, passed to each source as one scope.
-    discovery_default_location: str = "USA"
+    #: Titles searched per run, the user's job included.
+    planner_max_title_variants: int = 5
+
+    # ------------------------------------------------------------------
+    # Source registry
+    # ------------------------------------------------------------------
+    #: Portals switched off, comma-separated (e.g. "glassdoor,monster").
+    #: Every other registered portal runs.
+    sources_disabled: str = "monster"
+    #: Minimum seconds between two calls to the same DIRECT or APIFY source.
+    source_min_interval_seconds: float = 2.0
+    #: Queries one source may run per pipeline run, state fan-out included.
+    #: Hitting it is reported as BUDGET_REACHED.
+    source_max_calls_per_run: int = 60
+
+    # ------------------------------------------------------------------
+    # Discovery source adapters
+    # ------------------------------------------------------------------
     discovery_country: str = "usa"
     #: NexBase coverage budgets per (source, query). Hitting one is reported as
     #: BUDGET_REACHED, never confused with the source running out.
     discovery_max_pages_per_query: int = 25
     discovery_max_results_per_query: int = 1000
 
-    jobspy_default_sites: str = "indeed,linkedin,zip_recruiter,glassdoor,google"
     jobspy_results_wanted: int = 50
-    board_default_sites: str = "simplyhired,talent_com,postjobfree"
     #: Fetch a posting's own page when the results card had no description.
     board_fetch_detail_pages: bool = True
     board_detail_page_budget: int = 10
 
-    ats_default_slices: str = (
-        "greenhouse,lever,ashby,workable,smartrecruiters,bamboohr,breezy,"
-        "jazzhr,recruitee,paylocity"
-    )
     #: ats-scrapers with no slice downloads a ~17 GB snapshot. Opt-in only.
     ats_allow_full_snapshot: bool = False
-    ats_max_probes: int = 10
     ats_results_per_probe: int = 100
     #: The ATS jobs dataset has no website column; fill it from the directory.
     ats_resolve_company_sites: bool = True
@@ -160,20 +169,9 @@ class Settings(BaseSettings):
         return bool(self.supabase_url and self.supabase_service_role_key)
 
     @property
-    def ats_slices(self) -> list[str]:
-        return _csv(self.ats_default_slices)
-
-    @property
-    def board_sites(self) -> list[str]:
-        return _csv(self.board_default_sites)
-
-    @property
-    def jobspy_sites(self) -> list[str]:
-        return _csv(self.jobspy_default_sites)
-
-
-def _csv(value: str) -> list[str]:
-    return [s.strip() for s in value.split(",") if s.strip()]
+    def disabled_sources(self) -> frozenset[str]:
+        return frozenset(
+            s.strip().lower() for s in self.sources_disabled.split(",") if s.strip())
 
 
 @lru_cache

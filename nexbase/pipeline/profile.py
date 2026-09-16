@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 
 from nexbase.discovery import taxonomy
-from nexbase.pipeline.freshness import FreshCompany
+from nexbase.pipeline.company_identity import FreshCompany
 
 # ---------------------------------------------------------------------------
 # Employee size parsing

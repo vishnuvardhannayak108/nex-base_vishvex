@@ -24,7 +24,7 @@ USER (Sector + Job)
   -> Normalization ................... nexbase/pipeline/normalize.py
   -> Job deduplication ............... nexbase/pipeline/dedupe.py
   -> Freshness filter (<= 14 days) ... nexbase/pipeline/freshness.py
-  -> Company identification + dedup .. nexbase/pipeline/dedupe.py, domain_resolver.py
+  -> Company identification + dedup .. nexbase/pipeline/company_identity.py, domain_resolver.py
   -> Qualification engine ............ nexbase/pipeline/qualification.py, profile.py
   -> Free / public contact discovery . nexbase/contacts/discovery.py, extraction.py,
                                        nexbase/email/discovery.py
@@ -52,16 +52,16 @@ Shared infrastructure:
 |---|---|---|
 | 1 | Cleanup, config, schema, logging/observability skeleton | **done** |
 | 2 | USA-wide planner + source registry | **done** |
-| 3 | Direct sources + ATS + JobSpy cleanup | pending |
-| 4 | Normalization, dedup, freshness | pending (existing code runs) |
+| 3 | Direct sources + ATS + JobSpy cleanup | **done** |
+| 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | pending (existing code runs) |
 | 6 | Free/public contact discovery | pending (existing code runs) |
 | 7 | Enrichment waterfall ZoomInfo -> Apollo -> Apify | pending (not wired) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
-The runner currently executes: plan -> registry discovery -> normalize -> dedupe -> freshness ->
-qualify -> resolve domains -> free contact discovery + ranking. Paid enrichment
+The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
+company identification -> qualify -> resolve domains -> free contact discovery + ranking. Paid enrichment
 and email verification are **not called** until their budget logic exists.
 
 ## Planner and source registry
@@ -106,6 +106,26 @@ The 14-day window reaches the sources themselves: JobSpy `hours_old`,
 SimplyHired `t=14`, Talent.com `date=14`, Apify actor date inputs, and ATS
 slices read with only rows inside the window. PostJobFree has no date filter;
 the freshness stage handles it.
+
+## Normalization, deduplication, freshness, company identity
+
+- **Normalization** screens out postings with no employer name (`NO_COMPANY_NAME`),
+  outside the US (`NOT_US`), or with a stated non-full-time type (`NOT_FULL_TIME`),
+  and parses location into city / state / country and the posting date into UTC
+  with its precision (`DAY` for date-only sources, `TIME` for timestamps).
+- **Job dedup** is conservative: the same `(source_site, external_id)` is one job;
+  a cross-post needs the same company, title and a state-level location, and
+  never joins two different employer domains. Duplicates are kept on the
+  surviving job under `raw.duplicates`.
+- **Freshness** keeps postings at most 14 days old (calendar days for `DAY`
+  dates). An undated posting is kept only when its source enforced a date window
+  of 14 days or less (`provenance.source_date_window_hours`); otherwise it is
+  rejected as `MISSING_POSTING_DATE`. Every rejection is recorded with its reason.
+- **Company identity** uses the strongest evidence first: website domain >
+  employer (apply) URL domain with the same name > source company id (Indeed
+  `/cmp/`, LinkedIn `/company/`, ATS tenant) > name + state. Weaker evidence never
+  joins two different domains. `companies.identity_basis` / `identity_key` record
+  which rule applied.
 
 ---
 

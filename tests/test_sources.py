@@ -44,6 +44,18 @@ def test_only_verified_portals_are_registered(settings):
     assert registry.get("google") is None and registry.get("monster") is None
 
 
+def test_each_source_reports_the_date_window_it_enforces(settings):
+    registry = build_registry(settings)
+    windows = {s.portal: s.date_window_hours(336) if s.date_window_hours else None
+               for s in registry.sources()}
+    assert windows["indeed"] == windows["linkedin"] == 336
+    assert windows["simplyhired"] == windows["talent_com"] == 336
+    assert windows["postjobfree"] is None, "no date filter, so no undated row is trusted"
+    assert windows["glassdoor"] == 360 and windows["zip_recruiter"] == 336
+    assert all(windows[s.portal] is None for s in registry.sources()
+               if s.source_class is SourceClass.ATS)
+
+
 def test_apify_sources_need_a_token_and_get_their_own_budget(settings):
     for source in build_registry(settings).sources():
         if source.source_class is SourceClass.APIFY:
@@ -182,6 +194,8 @@ def test_board_adapters_receive_the_plans_freshness_window(settings, monkeypatch
     seen = {}
 
     class FakeBoard:
+        date_window_hours = staticmethod(lambda hours_old: None)
+
         def __init__(self, access=None, logger=None):
             pass
 

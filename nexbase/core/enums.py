@@ -72,14 +72,6 @@ class DiscoveryStage(str, Enum):
     ENRICHMENT = "ENRICHMENT"
 
 
-class FreshnessPriority(IntEnum):
-    """Brief: P1 ~5h-7d, P2 7-12d, P3 approaching 14d, hard cut at 14d."""
-
-    P1 = 1
-    P2 = 2
-    P3 = 3
-
-
 class ClientIndustry(str, Enum):
     """Sectors a run may target (the user-selected Sector input)."""
 

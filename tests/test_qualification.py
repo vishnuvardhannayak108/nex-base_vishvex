@@ -4,9 +4,7 @@ from __future__ import annotations
 import pytest
 
 from nexbase.core.enums import QualificationStatus
-from nexbase.pipeline.dedupe import dedupe_jobs
-from nexbase.pipeline.freshness import FreshnessFilter
-from nexbase.pipeline.normalize import normalize_job
+from nexbase.pipeline.company_identity import prepare_companies
 from nexbase.pipeline.profile import (
     build_profile,
     classify_industry,
@@ -17,7 +15,7 @@ from nexbase.pipeline.qualification import detect_agency, evaluate_size, score_c
 
 
 def _fresh(jobs, settings, now):
-    return FreshnessFilter(settings).filter(dedupe_jobs([normalize_job(j) for j in jobs]), now=now)
+    return prepare_companies(jobs, settings, now)[0]
 
 
 # ---------------------------------------------------------------------------

@@ -19,9 +19,9 @@ from nexbase.core.enums import QualificationStatus
 from nexbase.core.models import RawJob, extract_emails_from_text
 from nexbase.discovery import taxonomy
 from nexbase.discovery.planner import DiscoveryPlanner
-from nexbase.pipeline.dedupe import Deduplicator, location_bucket
-from nexbase.pipeline.freshness import FreshnessFilter
-from nexbase.pipeline.normalize import Normalizer, normalize_domain
+from nexbase.pipeline.company_identity import prepare_companies
+from nexbase.pipeline.dedupe import JobDeduplicator
+from nexbase.pipeline.normalize import Normalizer, normalize_domain, normalize_location
 from nexbase.pipeline.profile import build_profile
 from nexbase.pipeline.qualification import QualificationGate, score_company
 from nexbase.pipeline.runner import PipelineRunner
@@ -29,9 +29,7 @@ from tests.test_pipeline_e2e import StubAccess
 
 
 def _fresh(jobs, settings, now):
-    normalized, _ = Normalizer().normalize(jobs)
-    aggregates = Deduplicator().dedupe(normalized)
-    return FreshnessFilter(settings).filter(aggregates, now=now)
+    return prepare_companies(jobs, settings, now)[0]
 
 
 # ===========================================================================
@@ -188,8 +186,7 @@ def test_same_name_different_states_do_not_merge(make_job, settings, now):
         make_job(company="Summit Construction", title="Electrician", location="Tampa, FL"),
         make_job(company="Summit Construction", title="Laborer", location="Boise, ID"),
     ]
-    normalized, _ = Normalizer().normalize(jobs)
-    aggregates = Deduplicator().dedupe(normalized)
+    aggregates = _fresh(jobs, settings, now)
 
     assert len(aggregates) == 3
     assert all(a.hiring_intensity == 1 for a in aggregates)
@@ -202,8 +199,7 @@ def test_same_name_same_state_still_merges_across_sources(make_job, settings, no
         make_job(company="Toledo Tool", title="Welder", location="Columbus, OH",
                  source_site="talent_com", external_id="t-1"),
     ]
-    normalized, _ = Normalizer().normalize(jobs)
-    aggregates = Deduplicator().dedupe(normalized)
+    aggregates = _fresh(jobs, settings, now)
 
     assert len(aggregates) == 1
     assert aggregates[0].hiring_intensity == 2
@@ -214,10 +210,10 @@ def test_distinct_requisitions_are_preserved(make_job):
     jobs = [make_job(company="Toledo Tool", title="Machinist", location="Toledo, OH",
                      external_id=f"REQ-{n}") for n in (1, 2, 3)]
     normalized, _ = Normalizer().normalize(jobs)
-    aggregates = Deduplicator().dedupe(normalized)
+    kept, duplicates = JobDeduplicator().dedupe(normalized)
 
-    assert aggregates[0].hiring_intensity == 3
-    assert {j.external_id for j in aggregates[0].jobs} == {"REQ-1", "REQ-2", "REQ-3"}
+    assert duplicates == []
+    assert {j.external_id for j in kept} == {"REQ-1", "REQ-2", "REQ-3"}
 
 
 def test_the_same_job_cross_posted_still_collapses(make_job):
@@ -228,19 +224,19 @@ def test_the_same_job_cross_posted_still_collapses(make_job):
                  source_site="simplyhired", external_id="sh-4"),
     ]
     normalized, _ = Normalizer().normalize(jobs)
-    aggregates = Deduplicator().dedupe(normalized)
+    kept, duplicates = JobDeduplicator().dedupe(normalized)
 
-    assert aggregates[0].hiring_intensity == 1
-    assert aggregates[0].jobs[0].raw.get("cross_posted_on") == ["indeed", "simplyhired"]
+    assert len(kept) == 1 and len(duplicates) == 1
+    assert kept[0].raw.get("cross_posted_on") == ["indeed", "simplyhired"]
 
 
 @pytest.mark.parametrize(
     "location,expected",
-    [("toledo, oh", "oh"), ("columbus, oh 43004", "oh"), ("denver, co", "co"),
-     ("remote", "remote"), (None, "")],
+    [("Toledo, OH", "toledo, oh"), ("Columbus, OH 43004", "columbus, oh"),
+     ("Denver, Colorado, United States", "denver, co"), ("Remote", "remote"), (None, "")],
 )
-def test_location_bucket(location, expected):
-    assert location_bucket(location) == expected
+def test_location_key(location, expected):
+    assert normalize_location(location).key == expected
 
 
 def test_resolved_domain_reaches_contact_discovery(settings, make_job, now):
@@ -858,7 +854,7 @@ def test_bracketed_obfuscation_is_still_decoded(html, expected):
     ],
 )
 def test_employment_type_rules(employment_type, acceptable):
-    from nexbase.pipeline.freshness import employment_verdict
+    from nexbase.pipeline.normalize import employment_verdict
 
     ok, reason = employment_verdict(employment_type)
     assert ok is acceptable
@@ -875,7 +871,7 @@ def test_employment_type_rules(employment_type, acceptable):
     ],
 )
 def test_us_only_gate(country, location, is_us):
-    from nexbase.pipeline.freshness import is_us_location
+    from nexbase.pipeline.normalize import is_us_location
 
     assert is_us_location(country, location) is is_us
 
@@ -883,18 +879,18 @@ def test_us_only_gate(country, location, is_us):
 def test_non_full_time_job_is_rejected_before_age(make_job, settings, now):
     job = make_job(company="Acme Manufacturing", title="Welder", days_old=1)
     job.employment_type = "contract"
-    normalized, _ = Normalizer().normalize([job])
-    result = FreshnessFilter(settings).evaluate(normalized[0], now=now)
-    assert result.keep is False
-    assert result.reason.startswith("NOT_FULL_TIME")
+    normalized, discarded = Normalizer().normalize([job])
+    assert normalized == []
+    assert discarded[0].screen_reason.startswith("NOT_FULL_TIME")
 
 
 def test_non_us_job_is_rejected(make_job, settings, now):
     job = make_job(company="Acme Manufacturing", title="Welder",
                    location="Toronto, Canada", days_old=1)
     job.country = "CA"
-    normalized, _ = Normalizer().normalize([job])
-    assert FreshnessFilter(settings).evaluate(normalized[0], now=now).reason == "NOT_US"
+    normalized, discarded = Normalizer().normalize([job])
+    assert normalized == []
+    assert discarded[0].screen_reason == "NOT_US"
 
 
 def test_evidence_table_defines_every_column_the_code_writes():
@@ -1012,7 +1008,7 @@ def test_manufacturing_subtypes_still_qualify(make_job, settings, now):
 )
 def test_schema_org_employment_types(employment_type, acceptable):
     """SimplyHired publishes schema.org spellings; PART_TIME was slipping through."""
-    from nexbase.pipeline.freshness import employment_verdict
+    from nexbase.pipeline.normalize import employment_verdict
 
     assert employment_verdict(employment_type)[0] is acceptable
 
@@ -1291,7 +1287,7 @@ def test_needs_review_company_is_persisted_with_its_flags(settings, make_job, no
         now=now,
     )
     assert report.needs_review, "this company must reach review, not disappear"
-    row = next(c for c in repo.calls["company"] if c["normalized_name"] == "mystery mfg")
+    row = next(c for c in repo.calls["company"] if c["display_name"] == "Mystery Mfg")
     assert row["qualification_status"] == "NEEDS_REVIEW"
     assert "EMPLOYEE_SIZE_UNKNOWN" in row["review_flags"]
     assert row["hiring_intensity"] == 3

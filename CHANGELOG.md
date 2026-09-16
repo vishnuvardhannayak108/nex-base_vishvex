@@ -8,6 +8,62 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 4 — Normalization, job dedup, freshness, company identity (2026-09-16)
+
+Tests: 710 before, **746 passed** after (0 failed). `tests/test_dedupe_freshness.py`
+rewritten for the new stages; registry date-window test added to `tests/test_sources.py`.
+
+Stage order is now the plan's: raw jobs -> normalization -> job dedup ->
+freshness -> company identification + dedup -> qualification.
+
+### Added
+
+- `nexbase/core/geo.py`: US state tables and `us_state_of` / `in_us_state`, moved
+  out of `ats_discovery.py` (re-exported there) so normalization can use them.
+- `normalize.py`: `normalize_title`, stronger `normalize_company_name` (accents,
+  `&`/and, apostrophes, legal suffixes, leading "the"), `normalize_location` ->
+  city / state / country / remote, `normalize_posted_at` with `DAY`/`TIME`
+  precision, and screening reasons `NO_COMPANY_NAME`, `NOT_US`, `NOT_FULL_TIME`.
+- `dedupe.py`: job-only dedup. Same `(source_site, external_id)` -> `SAME_SOURCE_ID`;
+  same company + title + state-level location on different portals ->
+  `CROSS_POSTED`, never across two employer domains. Audit trail in `raw.duplicates`.
+- `freshness.py`: per-job `evaluate_freshness`: `STALE` (> 14 days),
+  `FUTURE_POSTING_DATE`, `MISSING_POSTING_DATE`, or `UNDATED_WITHIN_SOURCE_WINDOW`
+  when the source itself enforced a <= 14-day window.
+- Registry provenance `source_date_window_hours` (JobSpy 336, SimplyHired /
+  Talent.com 336, Glassdoor Apify 360, ZipRecruiter Apify 336, PostJobFree and
+  ATS none).
+- `company_identity.py`: union-find identity, domain > employer URL (same name)
+  > source company id > name + state; refuses to join two domains. `identity_basis`
+  and `identity_key` persisted on `companies`.
+- Schema: `jobs.state`, `jobs.country`, `jobs.date_precision`;
+  `companies.identity_basis`, `companies.identity_key` (additive `ALTER ... IF NOT EXISTS`).
+- Postings dropped at normalization or freshness are persisted as
+  `qualification_reasons` rows (stage `NORMALIZATION` / `FRESHNESS`) and counted in
+  `report.discarded`.
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| Freshness tiers P1/P2/P3, `FreshnessPriority` enum | `freshness.py`, `runner.py` (`freshness_priority` on jobs and leads), `qualification.py` breakdown | `test_dedupe_freshness.py`, `test_pipeline_e2e.py` acceptance 3 | The plan defines one rule: keep <= 14 days. Replaced by `freshest_job_age_days` for ordering |
+| Settings `freshness_priority1_max_days`, `freshness_priority1_min_hours`, `freshness_priority2_max_days` | `freshness.py`, `scripts/sync_vault.py` | none | Only fed the tiers. Stale keys in a local `.env` are ignored |
+| `jobs.freshness_priority` column + `idx_jobs_freshness` in `schema.sql` | `runner._persist_jobs` | e2e acceptance 3 | Tiers removed (existing live column is left in place; nothing writes it) |
+| `Deduplicator`, `dedupe_jobs`, `location_bucket`, company aggregation in `dedupe.py` | `runner.py`, `scripts/live_smoke.py` | `test_hardening.py`, `test_qualification.py`, `test_soc_discovery.py`, `test_dedupe_freshness.py` | Company dedup keyed on name + domain merged same-name domainless companies across states; replaced by `company_identity.py` |
+| `FreshCompany` in `freshness.py` (incl. `rejected_best_priority`, `best_priority`) | `runner.py`, `qualification.py`, `profile.py` | same as above | Freshness now runs per job before companies exist; `FreshCompany` lives in `company_identity.py` |
+| `NO_FRESH_JOBS` company rejection | `runner.py` | `test_pipeline_e2e.py` | A company is only built from fresh jobs; stale postings are recorded per job instead |
+| `employment_verdict`, `is_us_location` in `freshness.py` | `freshness.py` | `test_hardening.py` | Moved to `normalize.py` (screening happens at normalization) |
+| `NormalizedJob.dedup_key` | none after the rewrite | none | Dead; the key belongs to the company |
+
+### Open decisions
+
+- Full-time-only screening is not in the Master Plan; it was kept (moved to
+  normalization) because the previous spec required it.
+- Domain resolution by web search still runs inside qualification, after identity.
+- Schema changes are not yet applied to the live Supabase.
+
+---
+
 ## Phase 3 — Direct sources + ATS + JobSpy cleanup (2026-09-16)
 
 Tests: 678 before, **710 passed** after (0 failed); 29 new in

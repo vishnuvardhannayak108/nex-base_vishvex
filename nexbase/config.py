@@ -44,12 +44,9 @@ class Settings(BaseSettings):
     zerobounce_api_url: str = "https://api.zerobounce.net/v2"
 
     # ------------------------------------------------------------------
-    # Freshness (hard cut at 14 days)
+    # Freshness: keep postings at most this many days old
     # ------------------------------------------------------------------
     freshness_max_days: int = 14
-    freshness_priority1_max_days: int = 7
-    freshness_priority1_min_hours: float = 5.0
-    freshness_priority2_max_days: int = 12
 
     # ------------------------------------------------------------------
     # Qualification

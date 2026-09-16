@@ -98,15 +98,17 @@ def test_acceptance_1_raw_to_qualified_to_rejected_with_reasons(runner, universe
     report = runner.run(raw_jobs=universe, now=now)
 
     assert report.raw_jobs == 7
-    # 7 raw jobs -> Acme (3 sightings) + Bolt + Cog + Tiny + Mega = 5 companies.
-    assert report.companies == 5, "Acme's three sightings must be one company"
+    # Cog's only posting is 30 days old, so it never becomes a company.
+    # 6 fresh postings -> Acme (3 sightings) + Bolt + Tiny + Mega = 4 companies.
+    assert report.fresh_jobs == 6
+    assert report.companies == 4, "Acme's three sightings must be one company"
+    assert report.discarded == {"FRESHNESS:STALE": 1}
 
     qualified = {lead.company_name for lead in report.qualified}
     assert "acme manufacturing" in qualified
 
     rejected = {r.company_name: r for r in report.rejected}
     assert rejected["bolt staffing group"].reasons == ["STAFFING_AGENCY"]
-    assert rejected["cog industrial"].reasons == ["NO_FRESH_JOBS"]
     assert "EMPLOYEE_SIZE_BELOW_MIN" in rejected["tiny shop"].reasons
     assert "EMPLOYEE_SIZE_ABOVE_MAX" in rejected["mega industrial"].reasons
 
@@ -136,15 +138,13 @@ def test_acceptance_3_fourteen_day_rule(runner, universe, now, recording_repo):
     runner.run(raw_jobs=universe, now=now)
 
     jobs = recording_repo.calls["job"]
-    stale = [j for j in jobs if j["title"] == "Welder" and j["age_days"] > 14]
-    assert stale, "the 30-day posting must still be recorded"
-    assert all(j["is_fresh"] is False for j in stale)
-    assert all(j["freshness_reason"] == "STALE" for j in stale)
+    assert jobs and all(j["is_fresh"] and j["age_days"] <= 14 for j in jobs)
+    assert not any(j["title"] == "Welder" and j["age_days"] > 14 for j in jobs)
 
-    fresh = [j for j in jobs if j["is_fresh"]]
-    assert fresh
-    assert all(j["freshness_priority"] in (1, 2, 3) for j in fresh)
-    assert all(j["age_days"] is not None for j in fresh)
+    stale = [r for r in recording_repo.calls["rejection"] if r["stage"] == "FRESHNESS"]
+    assert [r["reason"] for r in stale] == ["STALE"], "the 30-day posting is recorded, not kept"
+    assert stale[0]["details"]["company"] == "Cog Industrial"
+    assert stale[0]["details"]["age_days"] > 14
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +226,8 @@ def test_every_stage_is_timed_and_reported(runner, universe, now):
     report = runner.run(raw_jobs=universe, now=now)
     assert report.run_key
     assert list(report.stages) == [
-        "discovery", "normalization", "deduplication", "freshness",
-        "qualification", "contacts",
+        "discovery", "normalization", "job_deduplication", "freshness",
+        "company_identification", "qualification", "contacts",
     ]
     assert all(s["status"] == "OK" and s["duration_ms"] >= 0 for s in report.stages.values())
     assert report.to_dict()["stages"] == report.stages

@@ -94,6 +94,9 @@ class Source:
     max_calls_per_run: int = 60
     #: Why a source is off when it is not the operator's choice.
     disabled_reason: str | None = None
+    #: hours_old -> the posting-date window the source itself enforces, in
+    #: hours, or None. Lets freshness keep an undated row the source filtered.
+    date_window_hours: Callable[[int], int | None] | None = None
 
     @property
     def id(self) -> str:
@@ -260,6 +263,9 @@ class SourceRegistry:
                 "title_origin": query.title.origin, "soc_code": query.title.soc_code,
                 "geo_code": query.geo.code, "geo_level": query.geo.level,
                 "fetched_at": fetched_at,
+                "source_date_window_hours": (
+                    source.date_window_hours(query.hours_old)
+                    if source.date_window_hours and query.hours_old else None),
             }
             jobs.append(job)
             accepted += 1
@@ -304,17 +310,20 @@ def build_registry(settings: Settings | None = None, access=None, logger=None) -
     for portal in JOBSPY_PORTALS:
         registry.register(Source(
             portal, SourceClass.DIRECT, "jobspy", _jobspy_adapter(portal, settings, log),
+            date_window_hours=lambda hours_old: hours_old,
             enabled=portal not in disabled, min_interval_seconds=interval,
             max_calls_per_run=budget))
     for portal, scraper in BOARD_SCRAPERS.items():
         registry.register(Source(
             portal, SourceClass.DIRECT, "nexbase-board", _board_adapter(scraper, access, log),
+            date_window_hours=scraper.date_window_hours,
             enabled=portal not in disabled, min_interval_seconds=interval,
             max_calls_per_run=budget))
     for portal, actor in APIFY_ACTORS.items():
         registry.register(Source(
             portal, SourceClass.APIFY, f"apify:{actor.actor_id}",
             _apify_adapter(portal, actor, settings),
+            date_window_hours=actor.date_window_hours,
             enabled=bool(settings.apify_api_token) and portal not in disabled,
             disabled_reason=None if settings.apify_api_token else "APIFY_API_TOKEN not set",
             min_interval_seconds=interval,

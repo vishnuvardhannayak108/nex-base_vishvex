@@ -60,6 +60,11 @@ CREATE INDEX IF NOT EXISTS idx_companies_qualification ON companies (qualificati
 CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies (normalized_domain);
 CREATE INDEX IF NOT EXISTS idx_companies_client_industry ON companies (client_industry);
 
+-- Company identity: the strongest evidence the company is keyed on
+-- (DOMAIN > EMPLOYER_URL > SOURCE_ID > NAME_LOCATION) and that evidence.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS identity_basis text;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS identity_key   text;
+
 -- Resolved official-domain provenance. `normalized_domain` stays the dedup key
 -- and is never rewritten by resolution; `domain` carries the verified official
 -- domain.
@@ -90,7 +95,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     evidence_url            text,
     ats_platform            text,
     is_fresh                boolean,
-    freshness_priority      integer,
     freshness_reason        text,
     applicant_count         integer,
     source_type             text,
@@ -108,7 +112,11 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS provenance jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs (company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_posting_date ON jobs (posting_date);
-CREATE INDEX IF NOT EXISTS idx_jobs_freshness ON jobs (freshness_priority);
+
+-- Normalized location and posting-date precision (DAY or TIME).
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS state          text;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS country        text;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS date_precision text;
 
 -- ---------------------------------------------------------------------------
 -- contacts

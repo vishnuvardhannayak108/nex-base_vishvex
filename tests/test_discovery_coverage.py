@@ -163,10 +163,11 @@ def test_pipeline_order_is_unchanged():
     order = [
         "# --- 1. Discovery",
         "# --- 2. Normalization",
-        "# --- 3. Deduplication",
+        "# --- 3. Job deduplication",
         "# --- 4. Freshness",
-        "# --- 5 + 6. Qualification",
-        "# --- 7. Contact discovery",
+        "# --- 5. Company identification",
+        "# --- 6. Qualification",
+        "# --- 7. Persist and process",
     ]
     positions = [src.index(marker) for marker in order]
     assert positions == sorted(positions), "pipeline stages are out of order"

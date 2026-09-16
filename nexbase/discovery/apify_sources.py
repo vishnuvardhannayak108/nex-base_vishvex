@@ -37,6 +37,8 @@ class ApifyActor:
     build_input: Callable[..., dict]
     #: (item, portal) -> RawJob, or None when the item is not a job
     to_raw_job: Callable[[dict, str], RawJob | None]
+    #: hours_old -> the date window the actor enforces, in hours
+    date_window_hours: Callable[[int], int | None]
 
 
 def run_actor(actor_id: str, actor_input: dict, *, token: str, max_items: int,
@@ -119,6 +121,16 @@ def _glassdoor_job(item: dict, portal: str) -> RawJob | None:
 # ---------------------------------------------------------------------------
 # ZipRecruiter: silentflow~ziprecruiter-scraper-ppe (documented example record)
 # ---------------------------------------------------------------------------
+#: The actor's fixed postedWithin windows, in hours.
+_ZIPRECRUITER_WINDOWS = (("today", 24), ("3days", 72), ("week", 168), ("2weeks", 336),
+                         ("month", 744))
+
+
+def _ziprecruiter_window(hours_old):
+    return next(((name, hours) for name, hours in _ZIPRECRUITER_WINDOWS if hours_old <= hours),
+                _ZIPRECRUITER_WINDOWS[-1])
+
+
 def _ziprecruiter_input(title, geo, hours_old, max_items) -> dict:
     data = {"searches": [title], "sort": "date", "maxItems": max_items,
             "includeDetails": True}
@@ -126,9 +138,7 @@ def _ziprecruiter_input(title, geo, hours_old, max_items) -> dict:
         data["location"] = geo.name
     if hours_old:
         # The actor's windows are fixed; the freshness filter trims the rest.
-        data["postedWithin"] = ("today" if hours_old <= 24 else "3days" if hours_old <= 72
-                                else "week" if hours_old <= 168
-                                else "2weeks" if hours_old <= 336 else "month")
+        data["postedWithin"] = _ziprecruiter_window(hours_old)[0]
     return data
 
 
@@ -155,7 +165,10 @@ def _ziprecruiter_job(item: dict, portal: str) -> RawJob | None:
 
 #: Portal -> the actor that serves it.
 APIFY_ACTORS: dict[str, ApifyActor] = {
-    "glassdoor": ApifyActor("agentx~glassdoor-jobs-scraper", _glassdoor_input, _glassdoor_job),
+    # posted_since is a date, so the window can reach back to that day's start.
+    "glassdoor": ApifyActor("agentx~glassdoor-jobs-scraper", _glassdoor_input, _glassdoor_job,
+                            lambda hours_old: hours_old + 24 if hours_old else None),
     "zip_recruiter": ApifyActor("silentflow~ziprecruiter-scraper-ppe",
-                                _ziprecruiter_input, _ziprecruiter_job),
+                                _ziprecruiter_input, _ziprecruiter_job,
+                                lambda hours_old: _ziprecruiter_window(hours_old)[1] if hours_old else None),
 }

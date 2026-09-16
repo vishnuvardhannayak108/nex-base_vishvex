@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 from nexbase.access.fetcher import AccessLayer  # noqa: E402
 from nexbase.config import get_settings  # noqa: E402
 from nexbase.core.models import RawJob  # noqa: E402
-from nexbase.pipeline.dedupe import Deduplicator  # noqa: E402
+from nexbase.pipeline.company_identity import prepare_companies  # noqa: E402
 from nexbase.pipeline.freshness import FreshnessFilter  # noqa: E402
 from nexbase.pipeline.normalize import Normalizer  # noqa: E402
 
@@ -121,8 +121,8 @@ def main() -> int:
     if not args.skip_contacts:
         from nexbase.contacts.discovery import ContactDiscovery
 
-        with_site = [c for c in Deduplicator().dedupe(
-            Normalizer().normalize(all_jobs)[0]) if c.company_website][:args.contact_sample]
+        with_site = [fc.company for fc in prepare_companies(all_jobs, settings, now)[0]
+                     if fc.company.company_website][:args.contact_sample]
         discovery = ContactDiscovery(access=access, settings=settings)
         for company in with_site:
             contact_page["companies_sampled"] += 1
@@ -142,8 +142,8 @@ def main() -> int:
         contact_page["emails"] = sorted(set(contact_page["emails"]))
 
     # ---- Overlap across sources ------------------------------------------
-    normalized, discarded = Normalizer().normalize(all_jobs)
-    companies = Deduplicator().dedupe(normalized)
+    companies, discarded, duplicates, stale = prepare_companies(all_jobs, settings, now)
+    normalized_count = len(all_jobs) - len(discarded)
     kept = sum(c.hiring_intensity for c in companies)
 
     report = {
@@ -152,16 +152,18 @@ def main() -> int:
                   "hours_old": args.hours_old},
         "totals": {
             "jobs_returned": len(all_jobs),
-            "normalized": len(normalized),
-            "discarded_no_company_name": len(discarded),
+            "normalized": normalized_count,
+            "screened_out": len(discarded),
+            "duplicate_jobs": len(duplicates),
+            "stale_or_undated": len(stale),
             "companies": len(companies),
-            "jobs_after_dedup": kept,
+            "fresh_jobs_in_companies": kept,
             "duplicate_rate": (
-                round(1 - kept / len(normalized), 3) if normalized else 0.0
+                round(len(duplicates) / normalized_count, 3) if normalized_count else 0.0
             ),
-            "companies_with_domain": sum(1 for c in companies if c.domain),
+            "companies_with_domain": sum(1 for c in companies if c.company.domain),
             "raw_observed_emails": sorted(
-                {e for c in companies for e in c.observed_emails}
+                {e for c in companies for e in c.company.observed_emails}
             ),
         },
         "contact_page_discovery": contact_page,

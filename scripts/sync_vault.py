@@ -89,8 +89,7 @@ def facts() -> dict:
         "size_resolver": s.size_resolver_enabled,
         "domain_cache_days": s.domain_cache_max_age_days,
         "domain_negative_cache_days": s.domain_negative_cache_days,
-        "freshness": f"P1 {s.freshness_priority1_min_hours}h-{s.freshness_priority1_max_days}d, "
-                     f"P2 to {s.freshness_priority2_max_days}d, P3 to {s.freshness_max_days}d",
+        "freshness": f"at most {s.freshness_max_days} days old",
         "max_title_variants": s.planner_max_title_variants,
         "source_max_calls": s.source_max_calls_per_run,
         "max_pages_per_query": s.discovery_max_pages_per_query,

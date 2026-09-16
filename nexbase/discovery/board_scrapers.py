@@ -318,6 +318,12 @@ class BoardScraper(ABC):
         )
         return body.get_text(" ", strip=True)[:20000] if body else None
 
+    @classmethod
+    def date_window_hours(cls, hours_old: int | None) -> int | None:
+        """The date filter this board's search URL enforces, in hours."""
+        days = date_filter_days(hours_old)
+        return days * 24 if cls.config.date_template and days else None
+
     def search_url(self, term: str, location: str, page: int = 1,
                    hours_old: int | None = None) -> str:
         url = self.config.search_template.format(

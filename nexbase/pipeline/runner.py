@@ -3,11 +3,12 @@
 Single entry point used by the API, the CLI and tests:
 
     1 Discover jobs: a USA-wide plan run through the source registry
-    2 Normalize
-    3 Deduplicate
+    2 Normalize (and screen out postings that cannot become leads)
+    3 Deduplicate jobs
     4 Freshness filter (<= 14 days)
-    5 Qualify (direct employer, size, industry, hiring signals)
-    6 Identify official domains
+    5 Identify and deduplicate companies
+    6 Qualify (direct employer, size, industry, hiring signals) and resolve
+      official domains
     7 Free / public contact discovery + POC ranking
 
 Paid enrichment and email verification are not wired in: they run only on
@@ -44,8 +45,9 @@ from nexbase.discovery.planner import DiscoveryPlan
 from nexbase.discovery.registry import SourceRegistry, build_registry
 from nexbase.email.discovery import EmailDiscovery
 from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
-from nexbase.pipeline.dedupe import CompanyAggregate, Deduplicator
-from nexbase.pipeline.freshness import FreshCompany, FreshnessFilter
+from nexbase.pipeline.company_identity import CompanyIdentifier, FreshCompany
+from nexbase.pipeline.dedupe import JobDeduplicator
+from nexbase.pipeline.freshness import FreshnessFilter
 from nexbase.pipeline.normalize import NormalizedJob, Normalizer
 from nexbase.pipeline.profile import CompanyProfile, build_profile
 from nexbase.pipeline.qualification import QualificationGate, QualificationResult
@@ -98,7 +100,7 @@ class QualifiedLead:
     status: str
     score: float
     job_count: int
-    freshness_priority: int | None
+    freshest_job_age_days: float | None
     client_industry: str | None
     industry_source: str | None
     employee_size: str | None
@@ -140,8 +142,11 @@ class PipelineReport:
     run_key: str | None = None
     raw_jobs: int = 0
     normalized_jobs: int = 0
+    duplicate_jobs: int = 0
+    fresh_jobs: int = 0
     companies: int = 0
-    fresh_companies: int = 0
+    #: "STAGE:REASON" -> postings dropped before company identification.
+    discarded: dict = field(default_factory=dict)
     qualified: list[QualifiedLead] = field(default_factory=list)
     needs_review: list[QualifiedLead] = field(default_factory=list)
     rejected: list[RejectedLead] = field(default_factory=list)
@@ -171,13 +176,15 @@ class PipelineReport:
                 "run_key": self.run_key,
                 "raw_jobs": self.raw_jobs,
                 "normalized_jobs": self.normalized_jobs,
+                "duplicate_jobs": self.duplicate_jobs,
+                "fresh_jobs": self.fresh_jobs,
                 "companies": self.companies,
-                "fresh_companies": self.fresh_companies,
                 "qualified": len(self.qualified),
                 "needs_review": len(self.needs_review),
                 "rejected": len(self.rejected),
             },
             "stages": self.stages,
+            "discarded": self.discarded,
             "size_resolution": self.size_resolution,
             "domain_resolution": self.domain_resolution,
             "source_status": self.source_status,
@@ -341,39 +348,34 @@ class PipelineRunner:
 
         # --- 2. Normalization ---------------------------------------------
         with stage(self.log, "normalization", report.stages):
-            normalized, discarded = Normalizer(self.log).normalize(raw)
+            normalized, screened = Normalizer(self.log).normalize(raw)
             report.normalized_jobs = len(normalized)
             report.normalized_job_records = [_json_safe(asdict(n)) for n in normalized]
+            for job in screened:
+                report.append_pitfall(stage="NORMALIZATION", reason=job.screen_reason,
+                                      title=job.title, url=job.evidence_url)
+                self._record_discarded(report, "NORMALIZATION", job.screen_reason, job)
 
-            for job in discarded:
-                report.append_pitfall(
-                    stage="NORMALIZATION",
-                    reason="NO_COMPANY_NAME",
-                    title=job.title,
-                    url=job.evidence_url,
-                )
-                self.repo.insert_qualification_reason(
-                    {
-                        "stage": "NORMALIZATION",
-                        "reason": "NO_COMPANY_NAME",
-                        "details": {"title": job.title, "url": job.evidence_url},
-                    }
-                )
-
-        # --- 3. Deduplication ---------------------------------------------
-        with stage(self.log, "deduplication", report.stages):
-            aggregates: list[CompanyAggregate] = Deduplicator(self.log).dedupe(normalized)
-            report.companies = len(aggregates)
+        # --- 3. Job deduplication -----------------------------------------
+        with stage(self.log, "job_deduplication", report.stages):
+            jobs, duplicates = JobDeduplicator(self.log).dedupe(normalized)
+            report.duplicate_jobs = len(duplicates)
 
         # --- 4. Freshness -------------------------------------------------
         with stage(self.log, "freshness", report.stages):
-            freshness_filter = FreshnessFilter(self.settings, self.log)
-            fresh: list[FreshCompany] = freshness_filter.filter(aggregates, now=now)
-            report.fresh_companies = len(fresh)
+            fresh_jobs, stale = FreshnessFilter(self.settings, self.log).split(jobs, now=now)
+            report.fresh_jobs = len(fresh_jobs)
+            for job, result in stale:
+                self._record_discarded(report, "FRESHNESS", result.reason, job,
+                                       age_days=result.age_days)
 
-        # --- 5 + 6. Qualification and company identification --------------
+        # --- 5. Company identification + deduplication ------------------
+        with stage(self.log, "company_identification", report.stages):
+            fresh: list[FreshCompany] = CompanyIdentifier(self.log).identify(fresh_jobs)
+            report.companies = len(fresh)
+
+        # --- 6. Qualification and official domains ------------------------
         with stage(self.log, "qualification", report.stages):
-            fresh_map = {fc.company.dedup_key: fc for fc in fresh}
             built_profiles = self._build_profiles(fresh, profiles, now=now)
             gate = QualificationGate(self.settings, self.log)
             qual_results = gate.qualify(fresh, built_profiles)
@@ -397,19 +399,16 @@ class PipelineRunner:
         # Spend the contact-discovery budget on the best records first: a
         # QUALIFIED company is worth its ~30 page fetches before one that is
         # still NEEDS_REVIEW.
-        def _priority(agg):
-            res = result_map.get(agg.dedup_key)
+        def _priority(fc):
+            res = result_map.get(fc.company.dedup_key)
             status = getattr(res, "status", None)
             rank = {QualificationStatus.QUALIFIED.value: 0,
                     QualificationStatus.NEEDS_REVIEW.value: 1}.get(status, 2)
-            return (rank, -agg.hiring_intensity)
+            return (rank, -fc.hiring_intensity)
 
         with stage(self.log, "contacts", report.stages):
-            for aggregate in sorted(aggregates, key=_priority):
-                self._process_company(
-                    aggregate, fresh_map, result_map, built_profiles,
-                    freshness_filter, now, report,
-                )
+            for fc in sorted(fresh, key=_priority):
+                self._process_company(fc, result_map, built_profiles, report)
 
         # --- Reporting ------------------------------------------------------
         report.access = {
@@ -428,59 +427,37 @@ class PipelineRunner:
         self.log.info(
             "pipeline_summary",
             raw_jobs=report.raw_jobs,
+            fresh_jobs=report.fresh_jobs,
             companies=report.companies,
-            fresh_companies=report.fresh_companies,
             qualified=len(report.qualified),
             needs_review=len(report.needs_review),
             rejected=len(report.rejected),
         )
         return report
 
-    def _process_company(self, aggregate, fresh_map, result_map, built_profiles,
-                         freshness_filter, now, report) -> None:
-        """Persist one company and its jobs, then record its outcome."""
+    def _record_discarded(self, report, stage_name: str, reason: str, job, **details) -> None:
+        """Count and persist a posting dropped before company identification."""
+        key = f"{stage_name}:{reason.split(':')[0]}"
+        report.discarded[key] = report.discarded.get(key, 0) + 1
+        self.repo.insert_qualification_reason({
+            "stage": stage_name, "reason": reason,
+            "details": _json_safe({
+                "company": job.company_name, "title": job.title, "url": job.evidence_url,
+                "source_site": job.source_site, "posting_date": job.posting_date,
+                "provenance": job.provenance or None, **details,
+            }),
+        })
+
+    def _process_company(self, fc, result_map, built_profiles, report) -> None:
+        """Persist one company and its fresh jobs, then record its outcome."""
+        aggregate = fc.company
         key = aggregate.dedup_key
-        fc = fresh_map.get(key)
         result = result_map.get(key)
         profile = built_profiles.get(key)
 
-        company_id = self._persist_company(aggregate, fc, result, profile)
-        self._persist_jobs(aggregate, fc, company_id, freshness_filter, now)
-
-        if fc is None:
-            report.rejected.append(
-                RejectedLead(
-                    aggregate.company_name_normalized,
-                    aggregate.domain,
-                    "FRESHNESS",
-                    ["NO_FRESH_JOBS"],
-                )
-            )
-            report.append_pitfall(
-                stage="FRESHNESS",
-                company=aggregate.company_name_normalized,
-                reason="NO_FRESH_JOBS",
-            )
-            self.repo.insert_qualification_reason(
-                {"company_id": company_id, "stage": "FRESHNESS", "reason": "NO_FRESH_JOBS"}
-            )
-            return
-
-        self._record_hiring_history(company_id, aggregate, fc)
-
-        for job, fres in fc.rejected_jobs:
-            self.repo.insert_qualification_reason(
-                {
-                    "company_id": company_id,
-                    "stage": "FRESHNESS",
-                    "reason": fres.reason,
-                    "details": {
-                        "posting_date": job.posting_date,
-                        "age_days": fres.age_days,
-                        "title": job.title,
-                    },
-                }
-            )
+        company_id = self._persist_company(aggregate, result, profile)
+        self._persist_jobs(fc, company_id)
+        self._record_hiring_history(company_id, fc)
 
         if result is None:
             return
@@ -672,7 +649,8 @@ class PipelineRunner:
             status = getattr(result, "status", None)
             rank = {QualificationStatus.QUALIFIED.value: 0,
                     QualificationStatus.NEEDS_REVIEW.value: 1}.get(status, 2)
-            return (rank, -fc.hiring_intensity, fc.best_priority or 9)
+            age = fc.min_age_days
+            return (rank, -fc.hiring_intensity, 99.0 if age is None else age)
 
         pending = [
             fc for fc in fresh
@@ -803,7 +781,7 @@ class PipelineRunner:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
-    def _persist_company(self, aggregate, fresh, result, profile) -> str | None:
+    def _persist_company(self, aggregate, result, profile) -> str | None:
         status = QualificationStatus.PENDING.value
         score = None
         reasons: list[str] = []
@@ -816,9 +794,12 @@ class PipelineRunner:
             flags = result.review_flags
             breakdown = result.breakdown
 
+        normalized_domain, normalized_name = aggregate.dedup_key
         data = {
-            "normalized_name": aggregate.company_name_normalized or "NO_NAME",
-            "normalized_domain": aggregate.domain or "NO_DOMAIN",
+            "normalized_name": normalized_name,
+            "normalized_domain": normalized_domain,
+            "identity_basis": aggregate.identity_basis,
+            "identity_key": aggregate.identity_key,
             "display_name": aggregate.company_name,
             "domain": aggregate.domain or None,
             "website": aggregate.company_website,
@@ -833,7 +814,8 @@ class PipelineRunner:
             "source_type": aggregate.jobs[0].source_type if aggregate.jobs else None,
             "source_priority": aggregate.best_source_priority,
             "last_seen_at": datetime.now(timezone.utc).isoformat(),
-            "raw_payload": {"source_sites": aggregate.source_sites},
+            "raw_payload": {"source_sites": aggregate.source_sites,
+                            "source_ids": aggregate.source_ids},
         }
 
         if aggregate.dedup_key in self._domain_failures:
@@ -864,14 +846,8 @@ class PipelineRunner:
 
         return self.repo.upsert_company(data)
 
-    def _persist_jobs(self, aggregate, fresh, company_id, freshness_filter, now) -> None:
-        fresh_lookup = {}
-        if fresh is not None:
-            for job, res in fresh.fresh_jobs + fresh.rejected_jobs:
-                fresh_lookup[id(job)] = res
-
-        for job in aggregate.jobs:
-            res = fresh_lookup.get(id(job)) or freshness_filter.evaluate(job, now=now)
+    def _persist_jobs(self, fresh, company_id) -> None:
+        for job, res in fresh.fresh_jobs:
             job_id = self.repo.upsert_job(
                 {
                     "company_id": company_id,
@@ -880,15 +856,17 @@ class PipelineRunner:
                     "title_normalized": job.title_normalized,
                     "location": job.location,
                     "location_normalized": job.location_normalized,
+                    "state": job.state,
+                    "country": job.country,
                     "description": (job.description or "")[:20000] or None,
                     "posting_date": job.posting_date,
                     "posted_at": job.posted_at.isoformat() if job.posted_at else None,
+                    "date_precision": job.date_precision,
                     "age_days": round(res.age_days, 3) if res.age_days is not None else None,
                     "application_url": job.application_url,
                     "evidence_url": job.evidence_url,
                     "ats_platform": job.ats_platform,
                     "is_fresh": res.keep,
-                    "freshness_priority": res.priority,
                     "freshness_reason": res.reason,
                     "applicant_count": job.applicant_count,
                     "source_type": job.source_type,
@@ -912,14 +890,14 @@ class PipelineRunner:
                     }
                 )
 
-    def _record_hiring_history(self, company_id, aggregate, fresh) -> None:
+    def _record_hiring_history(self, company_id, fresh) -> None:
         if company_id is None:
             return
         self.repo.upsert_hiring_history(
             {
                 "company_id": company_id,
                 "observed_on": date.today().isoformat(),
-                "open_jobs": aggregate.hiring_intensity,
+                "open_jobs": fresh.hiring_intensity,
                 "fresh_jobs": fresh.hiring_intensity,
             }
         )
@@ -954,7 +932,7 @@ class PipelineRunner:
             status=result.status,
             score=result.score,
             job_count=fresh.hiring_intensity,
-            freshness_priority=fresh.best_priority,
+            freshest_job_age_days=fresh.min_age_days,
             client_industry=getattr(profile, "client_industry", None),
             industry_source=getattr(profile, "industry_source", None),
             employee_size=_size_label(profile),

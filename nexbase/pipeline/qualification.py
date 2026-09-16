@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from nexbase.config import Settings, get_settings
 from nexbase.core.enums import QualificationStatus
 from nexbase.logging_setup import get_logger
-from nexbase.pipeline.freshness import FreshCompany
+from nexbase.pipeline.company_identity import FreshCompany
 from nexbase.pipeline.profile import CompanyProfile, build_profile
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ def score_company(
         + breakdown["persistence_bonus"]
     )
 
-    breakdown["best_freshness_priority"] = fresh.best_priority
+    breakdown["freshest_job_age_days"] = fresh.min_age_days
     breakdown["total"] = round(score, 2)
 
     # --- Verdict ----------------------------------------------------------

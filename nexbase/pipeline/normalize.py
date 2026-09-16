@@ -1,6 +1,8 @@
-"""Module 3: Normalization.
+"""Normalization: the first stage after discovery.
 
-Standardizes company name, domain, job title, location, and posting date.
+Standardizes company name, domain, job title, location (city, state, country,
+remote) and posting date (UTC, with its precision), and screens out postings
+that cannot become a lead: no employer name, outside the US, or not full-time.
 Never invents values: missing fields stay null.
 
 **Domain resolution is the load-bearing part.** Job boards report a *profile*
@@ -13,11 +15,14 @@ aggregator hosts are rejected outright.
 """
 from __future__ import annotations
 
+import html
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
+from nexbase.core.geo import us_state_of
 from nexbase.core.models import RawJob
 from nexbase.core.timeutils import coerce_datetime
 from nexbase.logging_setup import get_logger
@@ -130,15 +135,35 @@ def normalize_text(value: str | None) -> str:
     return _WHITESPACE.sub(" ", str(value).strip().lower())
 
 
+def _fold(value: str) -> str:
+    """HTML entities decoded and accents removed, so spellings compare equal."""
+    text = unicodedata.normalize("NFKD", html.unescape(value))
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
+def normalize_title(value: str | None) -> str:
+    """Lowercase title with entities, dashes and spacing made uniform.
+
+    Deliberately shallow: "Machinist (1st Shift)" and "Machinist (2nd Shift)"
+    are different openings, so nothing but formatting is removed.
+    """
+    if not value:
+        return ""
+    text = re.sub(r"[\u2010-\u2015]", "-", _fold(str(value)))
+    return _PUNCT_TAIL.sub("", normalize_text(text))
+
+
 def normalize_company_name(value: str | None) -> str:
     """Normalize a company name and strip trailing legal suffixes.
 
-    Applied repeatedly so "Acme Manufacturing Co., Inc." reduces the same way
-    "Acme Manufacturing" does.
+    "&" and "and", accents, apostrophes and punctuation are folded, and legal
+    suffixes are stripped repeatedly, so "Acme Manufacturing Co., Inc.",
+    "ACME Manufacturing" and "Acmé Manufacturing" reduce to the same name.
     """
-    normalized = normalize_text(value)
-    if not normalized:
+    if not value:
         return ""
+    normalized = normalize_text(_fold(str(value)).replace("&", " and "))
+    normalized = re.sub(r"['\u2019`]", "", normalized)
     normalized = _PUNCT_TAIL.sub("", normalized)
     for _ in range(3):
         stripped = _LEGAL_SUFFIX.sub("", normalized)
@@ -146,7 +171,9 @@ def normalize_company_name(value: str | None) -> str:
         if stripped == normalized:
             break
         normalized = stripped
-    return normalized.strip()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    normalized = re.sub(r"^the\s+", "", _WHITESPACE.sub(" ", normalized).strip())
+    return normalized
 
 
 def extract_host(url: str | None) -> str:
@@ -246,6 +273,129 @@ def resolve_domain(raw: RawJob) -> tuple[str, str]:
     return "", "NONE"
 
 
+# ---------------------------------------------------------------------------
+# Location
+# ---------------------------------------------------------------------------
+_ZIP = re.compile(r"\b\d{5}(?:-\d{4})?\b")
+_REMOTE = re.compile(r"\bremote\b", re.IGNORECASE)
+_LOCATION_PREFIX = re.compile(r"^(?:hybrid|remote|on-?site|onsite)\s+(?:in|-)\s+", re.IGNORECASE)
+_US_NAMES = {"us", "usa", "u.s.", "u.s.a.", "united states", "united states of america"}
+
+#: Location text that names a country other than the US.
+NON_US_MARKERS = (
+    "canada", "united kingdom", "india", "australia", "germany", "france",
+    "mexico", "brazil", "ireland", "singapore", "philippines", "netherlands",
+    "spain", "italy", "poland", "japan", "china", "remote, uk", ", uk", ", ca,",
+)
+
+
+@dataclass(frozen=True)
+class NormalizedLocation:
+    city: str | None
+    state: str | None
+    #: ISO-style country code when stated or implied by a US state, else None.
+    country: str | None
+    remote: bool
+
+    @property
+    def key(self) -> str:
+        """Canonical lower-case form: "toledo, oh", "oh", "remote" or ""."""
+        if self.state:
+            return f"{self.city}, {self.state}".lower() if self.city else self.state.lower()
+        return "remote" if self.remote else ""
+
+
+def normalize_country(country: str | None) -> str | None:
+    if not country:
+        return None
+    value = str(country).strip().lower()
+    if value in _US_NAMES:
+        return "US"
+    return value.upper() if len(value) == 2 and value.isalpha() else None
+
+
+def normalize_location(location: str | None, country: str | None = None,
+                       is_remote: bool | None = None) -> NormalizedLocation:
+    """City, state and country from however a source wrote the location."""
+    text = _WHITESPACE.sub(" ", _ZIP.sub("", str(location or ""))).strip(" ,")
+    state = us_state_of(text)
+    city = None
+    if state:
+        first = _LOCATION_PREFIX.sub("", text.split(",")[0]).strip()
+        if first and us_state_of(first) != state and first.lower() not in _US_NAMES:
+            city = first.title() if first.isupper() or first.islower() else first
+    code = normalize_country(country)
+    lowered = text.lower()
+    if code is None:
+        words = set(re.findall(r"[a-z]+", lowered.replace(".", "")))
+        if state or "united states" in lowered or words & {"us", "usa"}:
+            code = "US"
+        elif any(marker in lowered for marker in NON_US_MARKERS):
+            code = "NON_US"
+    return NormalizedLocation(city=city, state=state, country=code,
+                              remote=bool(is_remote) or bool(_REMOTE.search(text)))
+
+
+def is_us_location(country: str | None, location: str | None) -> bool:
+    """True unless the posting positively identifies a non-US country."""
+    return normalize_location(location, country).country in (None, "US")
+
+
+# ---------------------------------------------------------------------------
+# Employment type
+# ---------------------------------------------------------------------------
+#: Employment types excluded outright (contract, part-time, temporary,
+#: contract-to-hire, freelance, independent contractor, seasonal). Matched as
+#: substrings because sources spell these many ways.
+EXCLUDED_EMPLOYMENT_TOKENS = (
+    "part time", "parttime", "part-time",
+    "contract", "contractor", "c2h", "corp to corp", "corp-to-corp",
+    "temp", "temporary", "seasonal", "freelance", "intern", "volunteer",
+    "per diem", "perdiem", "casual",
+)
+
+#: Spellings that positively identify a full-time role.
+FULL_TIME_TOKENS = ("full time", "fulltime", "full-time", "permanent", "regular")
+
+
+def employment_verdict(employment_type: str | None) -> tuple[bool, str | None]:
+    """Return ``(acceptable, reason)`` for a source-reported employment type.
+
+    An unstated type is accepted rather than guessed at: most boards publish
+    nothing. Only a type the source actually stated can exclude.
+    """
+    if not employment_type:
+        return True, None
+    # schema.org spells these PART_TIME / FULL_TIME, boards "Part-time".
+    value = re.sub(r"[_\-/]+", " ", str(employment_type).strip().lower())
+    value = re.sub(r"\s+", " ", value)
+    if any(token in value for token in FULL_TIME_TOKENS):
+        return True, None
+    for token in EXCLUDED_EMPLOYMENT_TOKENS:
+        if token in value:
+            return False, f"NOT_FULL_TIME:{value[:40]}"
+    return True, None
+
+
+# ---------------------------------------------------------------------------
+# Dates
+# ---------------------------------------------------------------------------
+def normalize_posted_at(value) -> tuple[datetime | None, str | None]:
+    """``(posted_at in UTC, precision)``; precision is "DAY" or "TIME".
+
+    Several sources publish only a date (JobSpy's Indeed and LinkedIn rows,
+    Workable, BambooHR), which arrives as midnight. Counting such a posting's
+    age in hours would call a job posted on the 2nd "14.5 days old" at noon on
+    the 16th, so the precision travels with the timestamp.
+    """
+    posted = coerce_datetime(value)
+    if posted is None:
+        return None, None
+    posted = posted.replace(tzinfo=timezone.utc) if posted.tzinfo is None else posted.astimezone(timezone.utc)
+    midnight = (posted.hour, posted.minute, posted.second, posted.microsecond) == (0, 0, 0, 0)
+    return posted, "DAY" if midnight else "TIME"
+
+
 @dataclass
 class NormalizedJob:
     source_type: str
@@ -278,41 +428,53 @@ class NormalizedJob:
     observed_emails: list[str]
     raw: dict
     provenance: dict = field(default_factory=dict)
+    city: str | None = None
+    state: str | None = None
+    #: "DAY" when the source published only a date, "TIME" for a timestamp.
+    date_precision: str | None = None
+    #: Why normalization screened this posting out; None when it is in scope.
+    screen_reason: str | None = None
 
     @property
     def evidence_url(self) -> str | None:
         return self.application_url or self.apply_url
 
     @property
-    def dedup_key(self) -> tuple[str, str]:
-        domain = self.domain or "NO_DOMAIN"
-        name = self.company_name_normalized or "NO_NAME"
-        return (domain, name)
-
-    @property
     def is_actionable(self) -> bool:
-        """A posting with no employer name cannot become a prospect.
+        """In scope: an employer name, in the US, and not excluded by type."""
+        return self.screen_reason is None
 
-        Job boards occasionally emit rows with a null company. There is nothing
-        to research, qualify or contact, and keeping them manufactures a
-        phantom "NO_NAME" company that pollutes deduplication.
-        """
-        return bool(self.company_name_normalized)
+
+def screen_reason(job: NormalizedJob) -> str | None:
+    """Why a posting cannot become a lead, or None.
+
+    A posting without an employer name has nothing to research or contact and
+    would manufacture a phantom company. A posting outside the US, or with a
+    stated non-full-time type, is out of scope however fresh it is.
+    """
+    if not job.company_name_normalized:
+        return "NO_COMPANY_NAME"
+    if job.country not in (None, "US"):
+        return "NOT_US"
+    acceptable, reason = employment_verdict(job.employment_type)
+    return None if acceptable else reason
 
 
 def normalize_job(raw: RawJob) -> NormalizedJob:
-    """Normalize a single raw job record."""
-    posted_at = raw.posted_at or coerce_datetime(raw.raw.get("date_posted") if raw.raw else None)
+    """Normalize a single raw job record and screen it."""
+    posted_at, precision = normalize_posted_at(
+        raw.posted_at or (raw.raw.get("date_posted") if raw.raw else None))
     posting_date = posted_at.strftime("%Y-%m-%d") if posted_at else None
     domain, domain_source = resolve_domain(raw)
+    location = normalize_location(raw.location, raw.country, raw.is_remote)
 
-    return NormalizedJob(
+    job = NormalizedJob(
         source_type=raw.source_type,
         source_priority=raw.source_priority,
         source_site=raw.source_site,
         external_id=raw.external_id,
         title=raw.title,
-        title_normalized=normalize_text(raw.title),
+        title_normalized=normalize_title(raw.title),
         company_name=raw.company_name,
         company_name_normalized=normalize_company_name(raw.company_name),
         company_url=raw.company_url,
@@ -320,16 +482,16 @@ def normalize_job(raw: RawJob) -> NormalizedJob:
         domain=domain,
         domain_source=domain_source,
         location=raw.location,
-        location_normalized=normalize_text(raw.location),
+        location_normalized=location.key,
         description=raw.description,
         posted_at=posted_at,
         posting_date=posting_date,
         application_url=raw.application_url,
         apply_url=raw.apply_url,
         ats_platform=raw.ats_platform,
-        country=raw.country,
+        country=location.country,
         employment_type=raw.employment_type,
-        is_remote=raw.is_remote,
+        is_remote=location.remote,
         company_industry=raw.company_industry,
         search_industry=raw.search_industry,
         company_employee_count=raw.company_employee_count,
@@ -337,7 +499,12 @@ def normalize_job(raw: RawJob) -> NormalizedJob:
         observed_emails=list(raw.observed_emails or []),
         raw=raw.raw or {},
         provenance=dict(raw.provenance or {}),
+        city=location.city,
+        state=location.state,
+        date_precision=precision,
     )
+    job.screen_reason = screen_reason(job)
+    return job
 
 
 class Normalizer:
@@ -349,26 +516,25 @@ class Normalizer:
     def normalize(self, raw_jobs: list[RawJob]) -> tuple[list[NormalizedJob], list[NormalizedJob]]:
         """Return ``(actionable, discarded)``.
 
-        Discarded rows are those with no employer name; they are returned
-        rather than dropped silently so the caller can record a reason.
+        Discarded rows carry ``screen_reason``; they are returned rather than
+        dropped silently so the caller can record why.
         """
         actionable: list[NormalizedJob] = []
         discarded: list[NormalizedJob] = []
-        no_domain = 0
         for raw in raw_jobs:
             job = normalize_job(raw)
-            if not job.is_actionable:
-                discarded.append(job)
-                continue
-            if not job.domain:
-                no_domain += 1
-            actionable.append(job)
+            (actionable if job.is_actionable else discarded).append(job)
 
+        reasons: dict[str, int] = {}
+        for job in discarded:
+            key = job.screen_reason.split(":")[0]
+            reasons[key] = reasons.get(key, 0) + 1
         self.log.info(
             "normalization_complete",
             jobs=len(actionable),
-            with_domain=len(actionable) - no_domain,
-            without_domain=no_domain,
-            discarded_no_company_name=len(discarded),
+            with_domain=sum(1 for j in actionable if j.domain),
+            with_state=sum(1 for j in actionable if j.state),
+            dated=sum(1 for j in actionable if j.posted_at),
+            discarded=reasons,
         )
         return actionable, discarded

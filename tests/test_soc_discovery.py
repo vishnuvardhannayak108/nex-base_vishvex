@@ -15,8 +15,7 @@ from __future__ import annotations
 import pytest
 
 from nexbase.discovery import taxonomy
-from nexbase.pipeline.dedupe import dedupe_jobs
-from nexbase.pipeline.freshness import FreshnessFilter
+from nexbase.pipeline.company_identity import prepare_companies
 from nexbase.pipeline.normalize import normalize_job
 from nexbase.pipeline.qualification import score_company
 
@@ -106,22 +105,21 @@ def test_industry_universe_is_not_hardcoded_in_scraper_modules():
 # ---------------------------------------------------------------------------
 def test_cross_source_dedup_merges_jobs_from_different_sources(make_job, settings, now):
     jobs = [
-        normalize_job(make_job(company="Acme Steel Co", title="Welder",
-                               source_site="indeed", external_id="a")),
-        normalize_job(make_job(company="Acme Steel Company", title="Machinist",
-                               source_site="lever", external_id="b")),
+        make_job(company="Acme Steel Co", title="Welder", source_site="indeed", external_id="a"),
+        make_job(company="Acme Steel Company", title="Machinist", source_site="lever",
+                 external_id="b"),
     ]
-    aggregates = dedupe_jobs(jobs)
-    assert len(aggregates) == 1
-    assert aggregates[0].hiring_intensity == 2
+    companies = prepare_companies(jobs, settings, now)[0]
+    assert len(companies) == 1
+    assert companies[0].hiring_intensity == 2
 
 
 def test_freshness_applies_to_jobs_from_any_source(make_job, settings, now):
     jobs = [
-        normalize_job(make_job(company="Acme Steel Co", days_old=2, external_id="f")),
-        normalize_job(make_job(company="Acme Steel Co", days_old=40, external_id="s")),
+        make_job(company="Acme Steel Co", days_old=2, external_id="f"),
+        make_job(company="Acme Steel Co", title="Welder", days_old=40, external_id="s"),
     ]
-    fresh = FreshnessFilter(settings).filter(dedupe_jobs(jobs), now=now)
+    fresh = prepare_companies(jobs, settings, now)[0]
     assert len(fresh) == 1
     assert len(fresh[0].fresh_jobs) == 1
 
@@ -134,7 +132,7 @@ def test_search_intent_never_becomes_a_company_industry(make_job, settings, now)
     assert normalized.company_industry is None
     assert normalized.search_industry == "Manufacturing"
 
-    fresh = FreshnessFilter(settings).filter(dedupe_jobs([normalized]), now=now)[0]
+    fresh = prepare_companies([job], settings, now)[0][0]
     result = score_company(fresh, settings=settings)
     # The label travels, but only ever as intent: it is not "known", it is
     # sourced as DISCOVERY_INTENT, and the company is still flagged unknown.

@@ -8,7 +8,10 @@ Rules (Master Plan, Phase 5):
 - **Agency exclusion**: staffing, recruitment, executive search, intermediaries.
 - **Internal TA filter**: a mature in-house TA team rejects, a smaller one is
   reviewed.
-- **Industry relevance** against the run's selected sector.
+- **Industry relevance** against the run's selected sector. A mismatch is
+  reviewed, not rejected: the industry comes from a keyword classifier that
+  mislabels real sector members (a "Restaurants & Food Service" label reads as
+  food manufacturing).
 - **Hiring signals** scoring, including the LinkedIn applicant signal (<= 20 is
   positive, never a rejection).
 
@@ -158,12 +161,10 @@ def naics_sectors(client_sector: str) -> frozenset[str]:
 
 
 def evaluate_industry(profile: CompanyProfile, sector: str | None) -> tuple[str, str | None]:
-    """Return ``(verdict, reason)``: RELEVANT, NOT_RELEVANT or REVIEW.
+    """Return ``(verdict, reason)``: RELEVANT or REVIEW.
 
-    Only an industry observed about the employer can decide relevance. A
-    source's own industry label in a different NAICS sector rejects; an
-    industry read from job-description keywords is too weak to reject on, so a
-    mismatch there is reviewed.
+    Only an industry observed about the employer can make a company relevant.
+    Anything else is reviewed with the reason.
     """
     if not sector:
         return "REVIEW", "SECTOR_NOT_SELECTED"
@@ -180,9 +181,7 @@ def evaluate_industry(profile: CompanyProfile, sector: str | None) -> tuple[str,
         if sector == ClientIndustry.MANUFACTURING.value:
             return "RELEVANT", None
         return "REVIEW", "INDUSTRY_ADJACENT_SECTOR"
-    if profile.industry_source == "JOB_DESCRIPTION":
-        return "REVIEW", "INDUSTRY_MISMATCH_UNCONFIRMED"
-    return "NOT_RELEVANT", "INDUSTRY_NOT_RELEVANT"
+    return "REVIEW", "INDUSTRY_MISMATCH"
 
 
 def freshness_bonus(fresh: FreshCompany) -> float:
@@ -293,9 +292,7 @@ def score_company(
     breakdown["industry_source"] = profile.industry_source
     breakdown["industry_state"] = profile.industry_state
     breakdown["industry_verdict"] = industry_verdict
-    if industry_verdict == "NOT_RELEVANT":
-        reasons.append(industry_reason)
-    elif industry_reason:
+    if industry_reason:
         review_flags.append(industry_reason)
 
     # --- Internal TA filter ----------------------------------------------

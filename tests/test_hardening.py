@@ -945,7 +945,7 @@ def test_contact_discovery_has_a_subdomain_and_directory_stage(settings):
 def test_industry_is_judged_against_the_selected_sector_not_a_global_list(
     make_job, settings, now
 ):
-    """A retailer qualifies in a Retail run and is irrelevant to a Manufacturing run."""
+    """A retailer qualifies in a Retail run and is reviewed in a Manufacturing run."""
     def result_for(sector):
         fresh = _fresh(
             [make_job(company="Buckeye Retail Group", title="Store Manager",
@@ -957,8 +957,8 @@ def test_industry_is_judged_against_the_selected_sector_not_a_global_list(
 
     assert result_for("Retail").status == QualificationStatus.QUALIFIED.value
     manufacturing = result_for("Manufacturing")
-    assert manufacturing.status == QualificationStatus.REJECTED.value
-    assert manufacturing.reasons == ["INDUSTRY_NOT_RELEVANT"]
+    assert manufacturing.status == QualificationStatus.NEEDS_REVIEW.value
+    assert manufacturing.review_flags == ["INDUSTRY_MISMATCH"]
 
 
 def test_manufacturing_subtypes_still_qualify(make_job, settings, now):

@@ -186,9 +186,8 @@ rate limited per caller (`NEXBASE_API_RATE_LIMIT`, default 60/min).
     -> relevant;
   - same NAICS sector otherwise (e.g. Warehousing vs Logistics) ->
     `INDUSTRY_ADJACENT_SECTOR` review;
-  - a source's industry label in another NAICS sector -> `INDUSTRY_NOT_RELEVANT`
-    rejection; the same mismatch from job-description keywords ->
-    `INDUSTRY_MISMATCH_UNCONFIRMED` review;
+  - any other observed industry -> `INDUSTRY_MISMATCH` review (never a
+    rejection: the keyword classifier mislabels real sector members);
   - an unclassifiable label -> `INDUSTRY_UNCLASSIFIED`; no observed industry ->
     `INDUSTRY_UNKNOWN`; no sector -> `SECTOR_NOT_SELECTED` (all review).
 - **Hiring signals** add points: size and relevance (rule outcomes), freshness,

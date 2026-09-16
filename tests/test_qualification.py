@@ -280,14 +280,14 @@ def test_observed_industry_still_counts(make_job, settings, now):
     assert score_company(fresh, settings=settings).breakdown["industry_bonus"] == 12.0
 
 
-def test_an_observed_industry_from_another_sector_is_rejected_with_its_reason(
+def test_an_observed_industry_from_another_sector_is_reviewed_with_its_reason(
         make_job, settings, now):
     """The Molson Coors case: a brewery surfaced by a warehousing query."""
     job = make_job(company="Real Brewery", title="Brewer", employees="51 to 200",
                    industry="Food And Beverages", sector="Warehousing & Distribution")
     result = score_company(_fresh([job], settings, now)[0], settings=settings)
-    assert result.status == QualificationStatus.REJECTED.value
-    assert result.reasons == ["INDUSTRY_NOT_RELEVANT"]
+    assert result.status == QualificationStatus.NEEDS_REVIEW.value
+    assert result.review_flags == ["INDUSTRY_MISMATCH"]
     assert result.breakdown["selected_sector"] == "Warehousing & Distribution"
     assert result.breakdown["industry_bonus"] == 0.0
 
@@ -335,7 +335,11 @@ def test_unknown_size_is_reviewed_even_when_the_score_is_low(make_job, settings,
     ("Plastics/Rubber", "Industrial Manufacturing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
     ("Logistics & Transportation", "Warehousing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
     ("Construction", "Hospitals and Health Care", "NEEDS_REVIEW", "INDUSTRY_UNCLASSIFIED"),
-    ("Construction", "Hotels", "REJECTED", "INDUSTRY_NOT_RELEVANT"),
+    ("Construction", "Hotels", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    # The classifier reads these as food manufacturing / construction; a
+    # mismatch must never reject a real member of the sector.
+    ("Hospitality/Hotels", "Restaurants & Food Service", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Retail", "Building Materials", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
     (None, "Manufacturing", "NEEDS_REVIEW", "SECTOR_NOT_SELECTED"),
 ])
 def test_industry_relevance_to_the_selected_sector(make_job, settings, now,
@@ -351,15 +355,15 @@ def test_a_description_keyword_mismatch_is_reviewed_not_rejected(make_job, setti
                     title="Zorb Wrangler", description="Our hotel and resort team.")
     assert result.breakdown["industry_source"] == "JOB_DESCRIPTION"
     assert result.status == QualificationStatus.NEEDS_REVIEW.value
-    assert "INDUSTRY_MISMATCH_UNCONFIRMED" in result.review_flags
+    assert "INDUSTRY_MISMATCH" in result.review_flags
 
 
 def test_every_rejection_reason_is_reported(make_job, settings, now):
     result = _known(make_job, settings, now, company="Bolt Staffing Group",
                     employees="5,000 to 10,000", industry="Hotels")
     assert result.status == QualificationStatus.REJECTED.value
-    assert result.reasons == ["STAFFING_AGENCY", "EMPLOYEE_SIZE_ABOVE_MAX",
-                              "INDUSTRY_NOT_RELEVANT"]
+    assert result.reasons == ["STAFFING_AGENCY", "EMPLOYEE_SIZE_ABOVE_MAX"]
+    assert result.review_flags == ["INDUSTRY_MISMATCH"], "recorded alongside"
 
 
 @pytest.mark.parametrize("name", ["Acme Corporation", "Superior Consulting Group",

@@ -8,6 +8,20 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 5 audit correction (2026-09-16)
+
+An industry mismatch no longer rejects. `INDUSTRY_NOT_RELEVANT` (rejection) and
+`INDUSTRY_MISMATCH_UNCONFIRMED` (review) are replaced by one review flag,
+`INDUSTRY_MISMATCH`. Callers: `score_company` only; tests updated in
+`test_qualification.py` and `test_hardening.py`.
+
+Why: the rejection used `classify_industry`, a first-match keyword map, and
+wrongly rejected real sector members - verified: "Restaurants & Food Service" in
+a Hospitality run (read as food manufacturing), "Building Materials" and
+"Automotive Dealers" in a Retail run (read as construction / manufacturing). The
+Master Plan requires relevance to the selected sector; it does not say a
+mismatch rejects.
+
 ## Phase 5 — Qualification engine (2026-09-16)
 
 Tests: 727 before, **756 passed** after (0 failed). New rule tests in

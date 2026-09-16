@@ -1,0 +1,439 @@
+{
+  "generated_at": "2026-09-14T17:25:06.803114+00:00",
+  "query": {
+    "term": "warehouse associate",
+    "location": "Columbus, OH",
+    "hours_old": 336
+  },
+  "totals": {
+    "jobs_returned": 152,
+    "normalized": 149,
+    "discarded_no_company_name": 3,
+    "companies": 122,
+    "jobs_after_dedup": 146,
+    "duplicate_rate": 0.02,
+    "companies_with_domain": 38,
+    "raw_observed_emails": [
+      "_accommodation@mckesson.com",
+      "accessibility@mckesson.ca",
+      "accommodations@dollarshaveclub.com",
+      "help.join@vertiv.com",
+      "hr@us.dsv.com",
+      "hrsc@cencora.com",
+      "myhrservices@novolex.com",
+      "recruiter@pharmavite.com",
+      "talent@gfs.com"
+    ]
+  },
+  "contact_page_discovery": {
+    "companies_sampled": 3,
+    "pages_fetched": 69,
+    "pages_blocked": 33,
+    "emails": [
+      "cardinalcareers@cardinalhealth.com"
+    ],
+    "named_contacts": 0
+  },
+  "access": {
+    "scrapling_pages": 41,
+    "camoufox_fallbacks": 0,
+    "pages_blocked": 0,
+    "robots_blocked": 0,
+    "ssrf_blocked": 0,
+    "camoufox_budget": 25
+  },
+  "sources": [
+    {
+      "source": "jobspy:indeed",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 50,
+      "dated_jobs": 50,
+      "fresh_jobs": 43,
+      "with_company_name": 47,
+      "with_domain": 44,
+      "with_description": 50,
+      "with_employee_count": 40,
+      "with_industry": 12,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 0.94,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "_accommodation@mckesson.com",
+        "accessibility@mckesson.ca",
+        "hr@us.dsv.com",
+        "myhrservices@novolex.com",
+        "talent@gfs.com"
+      ],
+      "runtime_seconds": 2.41
+    },
+    {
+      "source": "jobspy:linkedin",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 50,
+      "dated_jobs": 48,
+      "fresh_jobs": 47,
+      "with_company_name": 50,
+      "with_domain": 5,
+      "with_description": 50,
+      "with_employee_count": 0,
+      "with_industry": 50,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 0.96,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "accommodations@dollarshaveclub.com",
+        "help.join@vertiv.com",
+        "hr@us.dsv.com",
+        "hrsc@cencora.com",
+        "recruiter@pharmavite.com"
+      ],
+      "runtime_seconds": 74.89
+    },
+    {
+      "source": "jobspy:zip_recruiter",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 0.84
+    },
+    {
+      "source": "jobspy:glassdoor",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 0.06
+    },
+    {
+      "source": "jobspy:google",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 0.95
+    },
+    {
+      "source": "board:simplyhired",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 20,
+      "dated_jobs": 7,
+      "fresh_jobs": 7,
+      "with_company_name": 20,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 0.35,
+        "description": 0.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 2.88
+    },
+    {
+      "source": "board:talent_com",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 20,
+      "dated_jobs": 20,
+      "fresh_jobs": 5,
+      "with_company_name": 20,
+      "with_domain": 0,
+      "with_description": 20,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 13.25
+    },
+    {
+      "source": "board:postjobfree",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 10,
+      "dated_jobs": 10,
+      "fresh_jobs": 10,
+      "with_company_name": 10,
+      "with_domain": 0,
+      "with_description": 10,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 2.84
+    },
+    {
+      "source": "ats:greenhouse",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 39.05
+    },
+    {
+      "source": "ats:lever",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 1,
+      "dated_jobs": 1,
+      "fresh_jobs": 0,
+      "with_company_name": 1,
+      "with_domain": 0,
+      "with_description": 1,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 15.03
+    },
+    {
+      "source": "ats:ashby",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 13.8
+    },
+    {
+      "source": "ats:workable",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 3.8
+    },
+    {
+      "source": "ats:smartrecruiters",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 1,
+      "dated_jobs": 1,
+      "fresh_jobs": 0,
+      "with_company_name": 1,
+      "with_domain": 0,
+      "with_description": 1,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 39.83
+    },
+    {
+      "source": "ats:bamboohr",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 5.84
+    },
+    {
+      "source": "ats:breezy",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 3.83
+    },
+    {
+      "source": "ats:jazzhr",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 8.31
+    },
+    {
+      "source": "ats:recruitee",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 4.22
+    },
+    {
+      "source": "ats:paylocity",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 0.91
+    }
+  ],
+  "runtime_seconds": 374.27,
+  "note": "Discovery only. No enrichment, no verification, no outreach."
+}

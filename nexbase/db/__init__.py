@@ -1,0 +1,1 @@
+"""Database package: Supabase client + schema."""

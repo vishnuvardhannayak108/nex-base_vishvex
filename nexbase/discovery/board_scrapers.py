@@ -1,0 +1,715 @@
+"""Module 2b: Monster and SimplyHired discovery.
+
+The client brief names eight discovery sources. JobSpy covers LinkedIn,
+Indeed, ZipRecruiter, Glassdoor and Google; ats-scrapers covers company career
+pages. **Neither package supports Monster or SimplyHired** - they are absent
+from JobSpy's `Site` enum and from all 65 sources in the ats-scrapers manifest.
+
+These two adapters close that gap. Both boards embed schema.org ``JobPosting``
+JSON-LD on their search results and detail pages, so extraction keys off that
+rather than off presentation markup, which keeps the adapters durable when the
+sites restyle. All fetching goes through the Access Layer, so the Scrapling ->
+Camoufox rules and the fallback budget apply here too.
+
+Nothing is invented: a posting with no parseable date is emitted with
+``posted_at=None`` and the freshness filter rejects it, exactly as for any
+other source.
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote_plus, urljoin
+
+from bs4 import BeautifulSoup
+
+from nexbase.access.fetcher import AccessLayer
+from nexbase.config import get_settings
+from nexbase.core.models import RawJob
+from nexbase.core.source_tracking import JOB_BOARD, SourceInfo
+from nexbase.core.timeutils import coerce_datetime
+from nexbase.discovery.coverage import (
+    BUDGET_REACHED,
+    ERROR,
+    SOURCE_EXHAUSTED,
+    SourceOutcome,
+    classify_fetch_failure,
+)
+from nexbase.logging_setup import get_logger
+
+# Boards emit both "3 days ago" and the compact "4d" / "2w" / "30m+".
+_RELATIVE_AGE = re.compile(
+    r"(\d+)\s*\+?\s*(months?|mo|minutes?|mins?|weeks?|hours?|hrs?|days?|m|w|h|d)"
+    r"(?![a-z])(?:\s*ago)?",
+    re.IGNORECASE,
+)
+_UNIT = {"m": "minute", "min": "minute", "mins": "minute", "minute": "minute",
+         "minutes": "minute", "h": "hour", "hr": "hour", "hrs": "hour",
+         "hour": "hour", "hours": "hour", "d": "day", "day": "day",
+         "days": "day", "w": "week", "week": "week", "weeks": "week",
+         "mo": "month", "month": "month", "months": "month"}
+_MONTH_DAY = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7,
+           "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def parse_month_day(text: str | None, now: datetime | None = None) -> datetime | None:
+    """Parse a year-less "Sep 12" stamp, as PostJobFree emits.
+
+    The year is resolved deterministically, not guessed: boards omit it only
+    for recent postings, so the current year is used unless that lands more
+    than a day in the future, in which case the stamp belongs to last year.
+    Returns None when nothing parses.
+    """
+    if not text:
+        return None
+    match = _MONTH_DAY.search(text)
+    if not match:
+        return None
+    now = now or datetime.now(timezone.utc)
+    month = _MONTHS.get(match.group(1).lower()[:3])
+    if month is None:
+        return None
+    day = int(match.group(2))
+    for year in (now.year, now.year - 1):
+        try:
+            candidate = datetime(year, month, day, tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        if (candidate - now).days <= 1:
+            return candidate
+    return None
+
+
+_JUST_POSTED = re.compile(r"just posted|today|active today", re.IGNORECASE)
+
+
+def parse_relative_age(text: str | None, now: datetime | None = None) -> datetime | None:
+    """Convert 'Posted 3 days ago' into a timestamp. Returns None if unparseable."""
+    if not text:
+        return None
+    now = now or datetime.now(timezone.utc)
+    if _JUST_POSTED.search(text):
+        return now
+    match = _RELATIVE_AGE.search(text)
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = _UNIT.get(match.group(2).lower())
+    if unit is None:
+        return None
+    delta = {
+        "minute": timedelta(minutes=amount),
+        "hour": timedelta(hours=amount),
+        "day": timedelta(days=amount),
+        "week": timedelta(weeks=amount),
+        "month": timedelta(days=30 * amount),
+    }[unit]
+    return now - delta
+
+
+def _iter_jsonld(soup: BeautifulSoup):
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            payload = json.loads(script.string or script.get_text() or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        stack = [payload]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(node)
+            elif isinstance(node, dict):
+                if "@graph" in node:
+                    stack.extend(node["@graph"] if isinstance(node["@graph"], list) else [])
+                yield node
+
+
+def _is_job_posting(node: dict) -> bool:
+    atype = node.get("@type")
+    types = atype if isinstance(atype, list) else [atype]
+    return any(str(t).lower() == "jobposting" for t in types if t)
+
+
+def _org_name(node: dict) -> str | None:
+    org = node.get("hiringOrganization")
+    if isinstance(org, dict):
+        return org.get("name")
+    if isinstance(org, str):
+        return org
+    return None
+
+
+def _org_site(node: dict) -> str | None:
+    org = node.get("hiringOrganization")
+    if isinstance(org, dict):
+        url = org.get("sameAs") or org.get("url")
+        if isinstance(url, str) and url.startswith("http"):
+            return url
+    return None
+
+
+def _location_text(node: dict) -> str | None:
+    loc = node.get("jobLocation")
+    if isinstance(loc, list):
+        loc = loc[0] if loc else None
+    if isinstance(loc, dict):
+        addr = loc.get("address")
+        if isinstance(addr, dict):
+            parts = [
+                addr.get("addressLocality"),
+                addr.get("addressRegion"),
+                addr.get("addressCountry")
+                if isinstance(addr.get("addressCountry"), str)
+                else None,
+            ]
+            joined = ", ".join(p for p in parts if p)
+            return joined or None
+        if isinstance(addr, str):
+            return addr
+    if isinstance(loc, str):
+        return loc
+    return None
+
+
+@dataclass
+class BoardConfig:
+    site: str
+    base_url: str
+    search_template: str
+
+
+class BoardScraper(ABC):
+    """Common JSON-LD-first scraping flow for a public job board."""
+
+    source: SourceInfo = JOB_BOARD
+    config: BoardConfig
+
+    #: Detail pages fetched per search page. Results cards carry a title and a
+    #: company; the description - and therefore any published email address -
+    #: only exists on the posting itself. Bounded because this is one extra
+    #: fetch per job.
+    detail_page_budget: int = 10
+
+    def __init__(self, access: AccessLayer | None = None, logger=None,
+                 fetch_details: bool | None = None) -> None:
+        self.access = access or AccessLayer()
+        self.log = logger or get_logger(f"nexbase.discovery.{self.config.site}")
+        from nexbase.config import get_settings
+
+        settings = get_settings()
+        self.fetch_details = (
+            settings.board_fetch_detail_pages if fetch_details is None else fetch_details
+        )
+        self.detail_page_budget = settings.board_detail_page_budget
+        self.details_fetched = 0
+
+    def _enrich_from_detail_pages(self, jobs: list[RawJob]) -> None:
+        """Fill missing descriptions from each posting's own page.
+
+        Only jobs that arrived without a description are fetched, so a board
+        that already returns full text costs nothing extra.
+        """
+        if not self.fetch_details:
+            return
+        from nexbase.core.models import extract_emails_from_text
+
+        for job in jobs:
+            if self.details_fetched >= self.detail_page_budget:
+                return
+            # Fetch when anything the pipeline needs is missing. SimplyHired
+            # cards carry none of the three: no description, no posting date
+            # (so freshness drops the job) and no employment type (so the
+            # client's full-time rule has nothing to judge).
+            if not job.application_url:
+                continue
+            if job.description and job.posted_at and job.employment_type:
+                continue
+            self.details_fetched += 1
+            try:
+                page = self.access.fetch(job.application_url)
+            except Exception as exc:
+                self.log.debug("board_detail_error", site=self.config.site,
+                               url=job.application_url, error=str(exc))
+                continue
+            if not page.ok:
+                continue
+
+            posting = self._detail_posting(page.html)
+            if job.posted_at is None and posting.get("datePosted"):
+                job.posted_at = coerce_datetime(posting["datePosted"])
+            if not job.employment_type and posting.get("employmentType"):
+                value = posting["employmentType"]
+                job.employment_type = (
+                    ", ".join(str(v) for v in value) if isinstance(value, list)
+                    else str(value)
+                )
+
+            text = self._detail_text(page.html, posting)
+            if text and not job.description:
+                job.description = text
+            if text:
+                job.observed_emails = list(
+                    dict.fromkeys(
+                        list(job.observed_emails or [])
+                        + extract_emails_from_text(text)
+                    )
+                )
+        if self.details_fetched:
+            self.log.info("board_details_fetched", site=self.config.site,
+                          count=self.details_fetched)
+
+    @staticmethod
+    def _detail_posting(html: str) -> dict:
+        """The JobPosting JSON-LD node from a posting page, or {}.
+
+        Boards that publish nothing useful in their results cards still emit a
+        complete schema.org JobPosting on the posting itself.
+        """
+        import json as _json
+
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = _json.loads(script.string or script.get_text() or "")
+            except (ValueError, TypeError):
+                continue
+            for node in (data if isinstance(data, list) else [data]):
+                if isinstance(node, dict) and node.get("@type") == "JobPosting":
+                    return node
+        return {}
+
+    @staticmethod
+    def _detail_text(html: str, posting: dict | None = None) -> str | None:
+        """Description text from a posting page, JSON-LD first."""
+        from bs4 import BeautifulSoup
+
+        if posting and posting.get("description"):
+            return BeautifulSoup(
+                str(posting["description"]), "html.parser"
+            ).get_text(" ", strip=True)[:20000]
+        soup = BeautifulSoup(html, "html.parser")
+        body = soup.select_one(
+            "[class*='description'], [id*='description'], [data-testid*='description'], main"
+        )
+        return body.get_text(" ", strip=True)[:20000] if body else None
+
+    def search_url(self, term: str, location: str, page: int = 1) -> str:
+        return self.config.search_template.format(
+            term=quote_plus(term), location=quote_plus(location), page=page
+        )
+
+    def search(
+        self,
+        search_terms: list[str],
+        locations: list[str],
+        pages: int | None = None,
+        max_results: int | None = None,
+        client_industry: str | None = None,
+    ) -> list[RawJob]:
+        """Walk every result page the board will serve for each query.
+
+        ``pages`` and ``max_results`` are *our* budgets, not the board's. When
+        one of them ends the walk the outcome says BUDGET_REACHED, so a board
+        that still had more is never mistaken for one that ran out.
+        """
+        settings = get_settings()
+        page_budget = pages if pages is not None else settings.discovery_max_pages_per_query
+        result_budget = (max_results if max_results is not None
+                         else settings.discovery_max_results_per_query)
+
+        records: list[RawJob] = []
+        seen: set[str] = set()
+        self.last_outcomes: list[SourceOutcome] = []
+
+        for term in search_terms:
+            for location in locations:
+                started = time.monotonic()
+                outcome = SourceOutcome(
+                    source=f"board:{self.config.site}", query=term,
+                    location_scope=location, stop_reason=SOURCE_EXHAUSTED,
+                )
+                self.last_outcomes.append(outcome)
+                accepted_here = 0
+
+                for page in range(1, page_budget + 1):
+                    if accepted_here >= result_budget:
+                        outcome.stop_reason = BUDGET_REACHED
+                        break
+                    url = self.search_url(term, location, page)
+                    self.log.info(
+                        "board_search_start",
+                        site=self.config.site,
+                        term=term,
+                        location=location,
+                        page=page,
+                    )
+                    outcome.pages = page
+                    try:
+                        fetched = self.access.fetch(url)
+                    except Exception as exc:
+                        outcome.stop_reason = ERROR
+                        outcome.error_type = type(exc).__name__
+                        outcome.error_message = str(exc)
+                        self.log.warning(
+                            "board_fetch_error", site=self.config.site, url=url, error=str(exc)
+                        )
+                        break
+
+                    if not fetched.ok:
+                        outcome.stop_reason = classify_fetch_failure(
+                            fetched.error, fetched.status)
+                        outcome.error_message = fetched.error
+                        self.log.warning(
+                            "board_fetch_blocked",
+                            site=self.config.site,
+                            url=url,
+                            engine=fetched.engine,
+                            error=fetched.error,
+                            stop_reason=outcome.stop_reason,
+                        )
+                        break
+
+                    found = self.parse(fetched.html, url, client_industry=client_industry)
+                    self._enrich_from_detail_pages(found)
+                    new = 0
+                    for job in found:
+                        key = job.external_id or job.application_url or ""
+                        if not key or key in seen:
+                            outcome.duplicates += 1
+                            continue
+                        seen.add(key)
+                        records.append(job)
+                        new += 1
+                    outcome.jobs_returned += len(found)
+                    outcome.jobs_accepted += new
+                    accepted_here += new
+                    self.log.info(
+                        "board_search_complete",
+                        site=self.config.site,
+                        term=term,
+                        location=location,
+                        page=page,
+                        parsed=len(found),
+                        new=new,
+                        engine=fetched.engine,
+                    )
+                    # Nothing parsed, or nothing on this page we had not already
+                    # seen: boards repeat the final page rather than 404, so
+                    # both mean the result set is finished.
+                    if not found or not new:
+                        outcome.stop_reason = SOURCE_EXHAUSTED
+                        break
+                else:
+                    # Every allowed page returned new rows - the board had more.
+                    outcome.stop_reason = BUDGET_REACHED
+
+                outcome.runtime_seconds = round(time.monotonic() - started, 2)
+
+        self.log.info("board_total", site=self.config.site, count=len(records))
+        return records
+
+    # ------------------------------------------------------------------
+    def parse(
+        self, html: str, page_url: str, client_industry: str | None = None
+    ) -> list[RawJob]:
+        soup = BeautifulSoup(html, "html.parser")
+        jobs = [
+            self._from_jsonld(node, page_url, client_industry)
+            for node in _iter_jsonld(soup)
+            if _is_job_posting(node)
+        ]
+        jobs = [j for j in jobs if j is not None]
+        if jobs:
+            return jobs
+        return self.parse_fallback(soup, page_url, client_industry)
+
+    def _from_jsonld(
+        self, node: dict, page_url: str, client_industry: str | None
+    ) -> RawJob | None:
+        title = node.get("title")
+        company = _org_name(node)
+        if not title or not company:
+            return None
+
+        url = node.get("url") or page_url
+        if isinstance(url, str) and url.startswith("/"):
+            url = urljoin(self.config.base_url, url)
+
+        posted_at = coerce_datetime(node.get("datePosted"))
+        identifier = node.get("identifier")
+        if isinstance(identifier, dict):
+            identifier = identifier.get("value")
+
+        description = node.get("description")
+        if isinstance(description, str):
+            description = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+
+        return RawJob(
+            source_type=self.source.source_type.value,
+            source_priority=int(self.source.source_priority.value),
+            source_site=self.config.site,
+            external_id=str(identifier) if identifier else (url if isinstance(url, str) else None),
+            title=str(title).strip(),
+            company_name=str(company).strip(),
+            company_url=None,
+            company_website=_org_site(node),
+            location=_location_text(node),
+            description=description,
+            posted_at=posted_at,
+            application_url=url if isinstance(url, str) else page_url,
+            apply_url=url if isinstance(url, str) else page_url,
+            country=None,
+            is_remote=bool(node.get("jobLocationType")),
+            company_industry=node.get("industry"),
+            search_industry=client_industry,
+            company_employee_count=None,
+            raw={"jsonld": {k: v for k, v in node.items() if k != "description"}},
+        )
+
+    @abstractmethod
+    def parse_fallback(
+        self, soup: BeautifulSoup, page_url: str, client_industry: str | None
+    ) -> list[RawJob]:
+        """Presentation-markup fallback when a page carries no JSON-LD."""
+
+
+class MonsterDiscovery(BoardScraper):
+    """Monster.com search results.
+
+    NON-FUNCTIONAL as of 2026-09-14 and disabled in ``BOARD_SCRAPERS``.
+    Live check: the page fetches fine (HTTP 200, ~174 KB, correct search title,
+    results header present) but contains zero job rows - no JobPosting JSON-LD,
+    no ``__NEXT_DATA__`` job array, and no card markup. Waiting for network idle
+    plus a 3 s settle does not change this, so Monster is serving an empty shell
+    rather than blocking us outright. Re-enable only once a path to the actual
+    listings is found; a CSS-selector guess will not fix it.
+    """
+
+    config = BoardConfig(
+        site="monster",
+        base_url="https://www.monster.com",
+        search_template=(
+            "https://www.monster.com/jobs/search"
+            "?q={term}&where={location}&page={page}&so=m.h.s"
+        ),
+    )
+
+    def parse_fallback(self, soup, page_url, client_industry):
+        jobs: list[RawJob] = []
+        for card in soup.select("[data-testid='JobCard'], article[data-test-id='svx-job-card']"):
+            link = card.find("a", href=True)
+            title_el = card.select_one("[data-testid='jobTitle'], h3, h2")
+            company_el = card.select_one("[data-testid='company'], [data-test-id='svx-job-card-company']")
+            location_el = card.select_one("[data-testid='jobDetailLocation'], [data-test-id='svx-job-card-location']")
+            age_el = card.select_one("[data-testid='jobDetailDateRecency'], time")
+            if not (title_el and company_el):
+                continue
+            url = urljoin(self.config.base_url, link["href"]) if link else page_url
+            jobs.append(
+                RawJob(
+                    source_type=self.source.source_type.value,
+                    source_priority=int(self.source.source_priority.value),
+                    source_site=self.config.site,
+                    external_id=url,
+                    title=title_el.get_text(strip=True),
+                    company_name=company_el.get_text(strip=True),
+                    location=location_el.get_text(strip=True) if location_el else None,
+                    posted_at=parse_relative_age(age_el.get_text(strip=True) if age_el else None),
+                    application_url=url,
+                    apply_url=url,
+                    search_industry=client_industry,
+                    raw={"extraction": "monster-card"},
+                )
+            )
+        return jobs
+
+
+class SimplyHiredDiscovery(BoardScraper):
+    """SimplyHired.com search results."""
+
+    config = BoardConfig(
+        site="simplyhired",
+        base_url="https://www.simplyhired.com",
+        search_template=(
+            "https://www.simplyhired.com/search?q={term}&l={location}&pn={page}"
+        ),
+    )
+
+    def parse_fallback(self, soup, page_url, client_industry):
+        jobs: list[RawJob] = []
+        for card in soup.select("[data-testid='searchSerpJob'], li.css-0 div.SerpJob-jobCard"):
+            link = card.find("a", href=True)
+            title_el = card.select_one("[data-testid='searchSerpJobTitle'], h3 a, .jobposting-title")
+            company_el = card.select_one("[data-testid='companyName'], .jobposting-company")
+            location_el = card.select_one("[data-testid='searchSerpJobLocation'], .jobposting-location")
+            age_el = card.select_one("[data-testid='searchSerpJobDateStamp'], [data-testid='detailText']")
+            if not (title_el and company_el):
+                continue
+            url = urljoin(self.config.base_url, link["href"]) if link else page_url
+            jobs.append(
+                RawJob(
+                    source_type=self.source.source_type.value,
+                    source_priority=int(self.source.source_priority.value),
+                    source_site=self.config.site,
+                    external_id=url,
+                    title=title_el.get_text(strip=True),
+                    company_name=company_el.get_text(strip=True),
+                    location=location_el.get_text(strip=True) if location_el else None,
+                    posted_at=parse_relative_age(age_el.get_text(strip=True) if age_el else None),
+                    application_url=url,
+                    apply_url=url,
+                    search_industry=client_industry,
+                    raw={"extraction": "simplyhired-card"},
+                )
+            )
+        return jobs
+
+
+class TalentComDiscovery(BoardScraper):
+    """Talent.com search results.
+
+    Added 2026-09-14 after a live coverage probe. Chosen over CareerBuilder,
+    Nexxt, Craigslist, USAJOBS, Snagajob, Jobcase and iHire because it is the
+    only candidate that server-renders every field the pipeline needs: title,
+    company, location and an exact ISO timestamp in a ``<time datetime>``
+    attribute (20/20 dated on the probe). robots.txt permits the search path
+    and Scrapling fetches it without the Camoufox fallback.
+
+    Aggregator caveat: listings carry no employer website, so domain
+    resolution falls back to the apply URL - the same limitation LinkedIn has.
+    """
+
+    config = BoardConfig(
+        site="talent_com",
+        base_url="https://www.talent.com",
+        search_template=(
+            "https://www.talent.com/jobs?k={term}&l={location}&p={page}"
+        ),
+    )
+
+    def parse_fallback(self, soup, page_url, client_industry):
+        jobs: list[RawJob] = []
+        for card in soup.select("[data-testid='job-card-unified']"):
+            title_el = card.select_one("[class*='JobCard_title']")
+            company_el = card.select_one("[class*='JobCard_company']")
+            location_el = card.select_one("[class*='JobCard_location']")
+            if not (title_el and company_el):
+                continue
+
+            link = card.find("a", href=True)
+            url = urljoin(self.config.base_url, link["href"]) if link else page_url
+
+            # Exact timestamp, so no relative-age guessing is needed.
+            time_el = card.find("time")
+            posted_at = coerce_datetime(time_el.get("datetime")) if time_el else None
+            if posted_at is None and time_el is not None:
+                posted_at = parse_relative_age(time_el.get_text(strip=True))
+
+            desc_el = card.select_one("[class*='JobCard_snippet'], [class*='JobCard_description']")
+
+            jobs.append(
+                RawJob(
+                    source_type=self.source.source_type.value,
+                    source_priority=int(self.source.source_priority.value),
+                    source_site=self.config.site,
+                    external_id=url,
+                    title=title_el.get_text(strip=True),
+                    company_name=company_el.get_text(strip=True),
+                    location=location_el.get_text(strip=True) if location_el else None,
+                    description=desc_el.get_text(" ", strip=True) if desc_el else None,
+                    posted_at=posted_at,
+                    application_url=url,
+                    apply_url=url,
+                    search_industry=client_industry,
+                    raw={"extraction": "talent_com-card"},
+                )
+            )
+        return jobs
+
+class PostJobFreeDiscovery(BoardScraper):
+    """PostJobFree.com search results.
+
+    Added 2026-09-14. Server-renders every required field in plain markup:
+    title, company (``.colorCompany``), location (``.colorLocation``),
+    description snippet and a year-less date stamp (``.colorDate``, e.g.
+    "Sep 12") resolved by :func:`parse_month_day`. Scrapling fetches it
+    without the Camoufox fallback.
+
+    Aggregator caveat: no employer website is published, so domain resolution
+    falls back to the apply URL - same limitation as LinkedIn and Talent.com.
+    """
+
+    config = BoardConfig(
+        site="postjobfree",
+        base_url="https://www.postjobfree.com",
+        search_template="https://www.postjobfree.com/jobs?q={term}&l={location}&p={page}",
+    )
+
+    def parse_fallback(self, soup, page_url, client_industry):
+        jobs: list[RawJob] = []
+        for card in soup.select("div.snippetPadding"):
+            title_el = card.select_one("h3.itemTitle a, .itemTitle a")
+            company_el = card.select_one(".colorCompany")
+            if not (title_el and company_el):
+                continue
+
+            location_el = card.select_one(".colorLocation")
+            date_el = card.select_one(".colorDate")
+            desc_el = card.select_one(".jdSnippet")
+            href = title_el.get("href") or ""
+            url = urljoin(self.config.base_url, href) if href else page_url
+
+            jobs.append(
+                RawJob(
+                    source_type=self.source.source_type.value,
+                    source_priority=int(self.source.source_priority.value),
+                    source_site=self.config.site,
+                    external_id=url,
+                    title=title_el.get_text(strip=True),
+                    company_name=company_el.get_text(strip=True),
+                    location=location_el.get_text(strip=True) if location_el else None,
+                    description=desc_el.get_text(" ", strip=True) if desc_el else None,
+                    posted_at=parse_month_day(
+                        date_el.get_text(strip=True) if date_el else None
+                    ),
+                    application_url=url,
+                    apply_url=url,
+                    search_industry=client_industry,
+                    raw={"extraction": "postjobfree-card"},
+                )
+            )
+        return jobs
+
+#: Only scrapers verified to return usable jobs. Monster is implemented but
+#: excluded - see MonsterDiscovery for the live-test evidence.
+BOARD_SCRAPERS = {
+    "simplyhired": SimplyHiredDiscovery,
+    "talent_com": TalentComDiscovery,
+    "postjobfree": PostJobFreeDiscovery,
+}
+
+#: Implemented but not returning results; kept for re-testing.
+DISABLED_BOARD_SCRAPERS = {
+    "monster": MonsterDiscovery,
+}
+
+
+def build_board_scrapers(
+    names: list[str], access: AccessLayer | None = None, logger=None
+) -> list[BoardScraper]:
+    scrapers = []
+    for name in names:
+        cls = BOARD_SCRAPERS.get(name.strip().lower())
+        if cls is not None:
+            scrapers.append(cls(access=access, logger=logger))
+    return scrapers

@@ -1,0 +1,217 @@
+"""Live source smoke test. Discovery only - never enriches, never queues.
+
+Reports what each source actually did, including the ones that fail. A source
+that returns nothing is reported as empty, not quietly omitted, and no
+workaround is applied on its behalf.
+
+    python scripts/live_smoke.py
+    python scripts/live_smoke.py --term "warehouse associate" --location "Columbus, OH"
+    python scripts/live_smoke.py --json report.json
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from nexbase.access.fetcher import AccessLayer  # noqa: E402
+from nexbase.config import get_settings  # noqa: E402
+from nexbase.core.models import RawJob  # noqa: E402
+from nexbase.pipeline.dedupe import Deduplicator  # noqa: E402
+from nexbase.pipeline.freshness import FreshnessFilter  # noqa: E402
+from nexbase.pipeline.normalize import Normalizer  # noqa: E402
+
+
+def _outcome(jobs: list[RawJob], error: str | None) -> str:
+    if error:
+        return "ERROR"
+    return "SUCCESS" if jobs else "EMPTY"
+
+
+def _source_row(name: str, jobs: list[RawJob], error: str | None,
+                seconds: float, settings, now) -> dict:
+    fresh_filter = FreshnessFilter(settings)
+    normalized, _ = Normalizer().normalize(jobs)
+    dated = [j for j in jobs if j.posted_at]
+    fresh = [
+        j for j in normalized
+        if fresh_filter.evaluate(j, now=now).keep
+    ]
+    return {
+        "source": name,
+        "outcome": _outcome(jobs, error),
+        "error": error,
+        "jobs_returned": len(jobs),
+        "dated_jobs": len(dated),
+        "fresh_jobs": len(fresh),
+        "with_company_name": sum(1 for j in jobs if j.company_name),
+        "with_domain": sum(1 for j in normalized if j.domain),
+        "with_description": sum(1 for j in jobs if j.description),
+        "with_employee_count": sum(1 for j in jobs if j.company_employee_count),
+        "with_industry": sum(1 for j in jobs if j.company_industry),
+        "extraction_completeness": {
+            "title": round(sum(1 for j in jobs if j.title) / len(jobs), 3) if jobs else 0,
+            "company": round(
+                sum(1 for j in jobs if j.company_name) / len(jobs), 3) if jobs else 0,
+            "date": round(len(dated) / len(jobs), 3) if jobs else 0,
+            "description": round(
+                sum(1 for j in jobs if j.description) / len(jobs), 3) if jobs else 0,
+        },
+        "raw_observed_emails": sorted(
+            {e for j in jobs for e in (j.observed_emails or [])}
+        ),
+        "runtime_seconds": round(seconds, 2),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--term", default="warehouse associate")
+    parser.add_argument("--location", default="Columbus, OH")
+    parser.add_argument("--hours-old", type=int, default=336)
+    parser.add_argument("--json", dest="json_path", default=None)
+    parser.add_argument("--contact-sample", type=int, default=3,
+                        help="companies to probe for contact-page emails")
+    parser.add_argument("--skip-contacts", action="store_true")
+    args = parser.parse_args()
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    access = AccessLayer(settings=settings)  # shared: one limiter, one budget
+    rows: list[dict] = []
+    all_jobs: list[RawJob] = []
+    started = time.monotonic()
+
+    # ---- JobSpy, one site at a time so a failure is attributable ----------
+    from nexbase.discovery.jobspy_discovery import JobSpyDiscovery
+
+    for site in settings.jobspy_sites:
+        t0 = time.monotonic()
+        error = None
+        jobs: list[RawJob] = []
+        try:
+            jobs = JobSpyDiscovery(settings).search(
+                search_terms=[args.term], locations=[args.location],
+                site_names=[site], hours_old=args.hours_old,
+            )
+        except Exception as exc:  # reported, never worked around
+            error = f"{type(exc).__name__}: {exc}"
+        rows.append(_source_row(f"jobspy:{site}", jobs, error,
+                                time.monotonic() - t0, settings, now))
+        all_jobs.extend(jobs)
+
+    # ---- Own board adapters ----------------------------------------------
+    from nexbase.discovery.board_scrapers import build_board_scrapers
+
+    for scraper in build_board_scrapers(settings.board_sites, access=access):
+        t0 = time.monotonic()
+        error = None
+        jobs = []
+        try:
+            jobs = scraper.search(
+                search_terms=[args.term], locations=[args.location], pages=1
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        rows.append(_source_row(f"board:{scraper.config.site}", jobs, error,
+                                time.monotonic() - t0, settings, now))
+        all_jobs.extend(jobs)
+
+    # ---- ATS slices, with the planned query and location -----------------
+    from nexbase.discovery.ats_discovery import ATSDiscovery
+
+    for slice_name in settings.ats_slices:
+        t0 = time.monotonic()
+        error = None
+        jobs = []
+        try:
+            jobs = ATSDiscovery(settings).search(
+                query=args.term, location=args.location, ats=slice_name,
+                limit=settings.ats_results_per_probe,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        rows.append(_source_row(f"ats:{slice_name}", jobs, error,
+                                time.monotonic() - t0, settings, now))
+        all_jobs.extend(jobs)
+
+    # ---- Contact-page emails on a bounded sample --------------------------
+    # Discovery only: this reads public company pages, it never enriches,
+    # verifies or queues anything.
+    contact_page = {"companies_sampled": 0, "pages_fetched": 0,
+                    "pages_blocked": 0, "emails": [], "named_contacts": 0}
+    if not args.skip_contacts:
+        from nexbase.contacts.discovery import ContactDiscovery
+
+        with_site = [c for c in Deduplicator().dedupe(
+            Normalizer().normalize(all_jobs)[0]) if c.company_website][:args.contact_sample]
+        discovery = ContactDiscovery(access=access, settings=settings)
+        for company in with_site:
+            contact_page["companies_sampled"] += 1
+            try:
+                found = discovery.discover(
+                    company.company_name_normalized, company.company_website, [], []
+                )
+            except Exception as exc:
+                contact_page.setdefault("errors", []).append(str(exc))
+                continue
+            contact_page["pages_fetched"] += found.pages_fetched
+            contact_page["pages_blocked"] += found.pages_blocked
+            contact_page["emails"].extend(found.page_emails)
+            contact_page["named_contacts"] += sum(
+                1 for c in found.candidates if c.name and c.email
+            )
+        contact_page["emails"] = sorted(set(contact_page["emails"]))
+
+    # ---- Overlap across sources ------------------------------------------
+    normalized, discarded = Normalizer().normalize(all_jobs)
+    companies = Deduplicator().dedupe(normalized)
+    kept = sum(c.hiring_intensity for c in companies)
+
+    report = {
+        "generated_at": now.isoformat(),
+        "query": {"term": args.term, "location": args.location,
+                  "hours_old": args.hours_old},
+        "totals": {
+            "jobs_returned": len(all_jobs),
+            "normalized": len(normalized),
+            "discarded_no_company_name": len(discarded),
+            "companies": len(companies),
+            "jobs_after_dedup": kept,
+            "duplicate_rate": (
+                round(1 - kept / len(normalized), 3) if normalized else 0.0
+            ),
+            "companies_with_domain": sum(1 for c in companies if c.domain),
+            "raw_observed_emails": sorted(
+                {e for c in companies for e in c.observed_emails}
+            ),
+        },
+        "contact_page_discovery": contact_page,
+        "access": {
+            "scrapling_pages": access.pages_fetched,
+            "camoufox_fallbacks": access.fallback_count,
+            "pages_blocked": access.pages_blocked,
+            "robots_blocked": access.robots_blocked,
+            "ssrf_blocked": access.ssrf_blocked,
+            "camoufox_budget": settings.camoufox_budget_per_run,
+        },
+        "sources": rows,
+        "runtime_seconds": round(time.monotonic() - started, 2),
+        "note": "Discovery only. No enrichment, no verification, no outreach.",
+    }
+
+    print(json.dumps(report, indent=2))
+    if args.json_path:
+        Path(args.json_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"\nwritten: {args.json_path}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

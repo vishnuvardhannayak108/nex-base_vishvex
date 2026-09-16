@@ -1,0 +1,23 @@
+[project]
+name = "nexbase"
+version = "0.3.0"
+description = "NexBase US-wide B2B Lead Discovery + Contact Intelligence System"
+requires-python = ">=3.11"
+
+[project.scripts]
+nexbase = "nexbase.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = { find = { include = ["nexbase*"] } }
+
+[tool.setuptools.package-data]
+"nexbase.db" = ["*.sql"]
+"nexbase.discovery" = ["data/*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers -m \"not network\""
+markers = [
+    "network: test performs real network I/O (deselect with '-m \"not network\"')",
+]

@@ -1,0 +1,1 @@
+"""Core domain package: enums, errors, and shared types."""

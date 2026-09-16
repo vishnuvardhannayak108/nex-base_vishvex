@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".venv/Scripts/python.exe scripts/sync_vault.py",
+            "timeout": 240
+          }
+        ]
+      }
+    ]
+  }
+}

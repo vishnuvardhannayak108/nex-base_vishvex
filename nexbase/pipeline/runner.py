@@ -1,0 +1,1484 @@
+"""Pipeline runner: orchestrates every module in the locked order.
+
+Single entry point used by the API, the CLI and tests:
+
+    1 Discover jobs
+    2 Normalize
+    3 Deduplicate
+    4 Freshness filter (<= 14 days)
+    5 Qualify (direct employer, size, industry, hiring signals)
+    6 Identify official domains
+    7 Free / public contact discovery + POC ranking
+
+Paid enrichment and email verification are not wired in: they run only on
+QUALIFIED companies behind budget logic, which does not exist yet. Nothing
+here sends email.
+
+One :class:`AccessLayer` is shared for the whole run, so the rate limiter and
+the Camoufox budget are genuinely global rather than resetting per company.
+"""
+from __future__ import annotations
+
+import time as _time
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timezone
+from enum import Enum
+from typing import Any
+
+from nexbase.access.fetcher import AccessLayer
+from nexbase.config import Settings, get_settings
+from nexbase.contacts.discovery import ContactDiscovery
+from nexbase.contacts.models import ContactCandidate
+from nexbase.contacts.ranking import ContactRanker
+from nexbase.core.enums import (
+    DiscoveryStage,
+    EmailStatus,
+    QualificationStatus,
+    SourcePriority,
+    SourceType,
+)
+from nexbase.core.models import RawJob
+from nexbase.db.repository import InertRepository, SupabaseRepository
+from nexbase.discovery.ats_discovery import ATSDiscovery, ATSSliceCache
+from nexbase.discovery.board_scrapers import BOARD_SCRAPERS, build_board_scrapers
+from nexbase.discovery.jobspy_discovery import JobSpyDiscovery
+from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
+from nexbase.discovery.coverage import (
+    BUDGET_REACHED,
+    SOURCE_EXHAUSTED,
+    CoverageReport,
+    SourceOutcome,
+    classify_fetch_failure,
+)
+from nexbase.discovery.planner import DiscoveryPlan, DiscoveryPlanner
+from nexbase.email.discovery import EmailDiscovery
+from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
+from nexbase.pipeline.dedupe import CompanyAggregate, Deduplicator
+from nexbase.pipeline.freshness import FreshCompany, FreshnessFilter
+from nexbase.pipeline.normalize import NormalizedJob, Normalizer
+from nexbase.pipeline.profile import CompanyProfile, build_profile
+from nexbase.pipeline.qualification import QualificationGate, QualificationResult
+from nexbase.pipeline.domain_resolver import (
+    ACCEPTABLE,
+    DomainCache,
+    DomainResolver,
+    NullDomainResolver,
+    domain_row,
+    negative_domain_row,
+)
+from nexbase.pipeline.size_resolver import (
+    NullSizeResolver,
+    SizeCache,
+    SizeResolver,
+    WebSizeResolver,
+)
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert values into JSON-serializable primitives."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    try:
+        return str(value)
+    except Exception:
+        return None
+
+
+@dataclass
+class QualifiedLead:
+    company_name: str
+    display_name: str | None
+    domain: str
+    website: str | None
+    location: str | None
+    status: str
+    score: float
+    job_count: int
+    freshness_priority: int | None
+    client_industry: str | None
+    industry_source: str | None
+    employee_size: str | None
+    employee_size_source: str | None
+    applicant_count: int | None
+    review_flags: list[str] = field(default_factory=list)
+    contacts: list[dict] = field(default_factory=list)
+    emails: list[str] = field(default_factory=list)
+    #: PERSONAL_EMAIL_FOUND | ROLE_EMAIL_FOUND | MULTIPLE_EMAILS_FOUND |
+    #: NO_PUBLIC_EMAIL_FOUND. A lead with only a role mailbox is still a lead.
+    email_status: str = EmailStatus.NO_PUBLIC_EMAIL_FOUND.value
+    #: Every observed address with its source URL, portal and stage.
+    observed_emails: list[dict] = field(default_factory=list)
+    #: Addresses attributable to a named person.
+    named_contact_emails: list[dict] = field(default_factory=list)
+    #: Shared mailboxes: company-level evidence, never a person.
+    role_mailboxes: list[str] = field(default_factory=list)
+    #: Portals actually searched for this employer.
+    portals_searched: list[str] = field(default_factory=list)
+    #: Which contact-discovery stages ran.
+    discovery_stages: list[str] = field(default_factory=list)
+    domain_confidence: str | None = None
+    domain_source: str | None = None
+    rejection_reasons: list[str] = field(default_factory=list)
+    evidence_url: str | None = None
+    source_sites: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RejectedLead:
+    company_name: str
+    domain: str
+    stage: str
+    reasons: list[str]
+
+
+@dataclass
+class PipelineReport:
+    run_key: str | None = None
+    raw_jobs: int = 0
+    normalized_jobs: int = 0
+    companies: int = 0
+    fresh_companies: int = 0
+    qualified: list[QualifiedLead] = field(default_factory=list)
+    needs_review: list[QualifiedLead] = field(default_factory=list)
+    rejected: list[RejectedLead] = field(default_factory=list)
+    qualification_records: list[dict] = field(default_factory=list)
+    #: Per-stage status and duration, from ``logging_setup.stage``.
+    stages: dict = field(default_factory=dict)
+    size_resolution: dict = field(default_factory=dict)
+    domain_resolution: dict = field(default_factory=dict)
+    #: Per-source outcome, so an empty or broken source stays visible
+    #: instead of being folded into a single total.
+    source_status: dict = field(default_factory=dict)
+    #: Why each (source, query) stopped: exhausted, blocked, robots, rate
+    #: limited, capped by the source, or capped by our own budget.
+    coverage: dict = field(default_factory=dict)
+    access: dict = field(default_factory=dict)
+    pitfalls: list[dict] = field(default_factory=list)
+    plan: dict | None = None
+    raw_job_records: list[dict] = field(default_factory=list)
+    normalized_job_records: list[dict] = field(default_factory=list)
+
+    def append_pitfall(self, **kwargs) -> None:
+        self.pitfalls.append(kwargs)
+
+    def to_dict(self, include_records: bool = False) -> dict:
+        payload = {
+            "meta": {
+                "run_key": self.run_key,
+                "raw_jobs": self.raw_jobs,
+                "normalized_jobs": self.normalized_jobs,
+                "companies": self.companies,
+                "fresh_companies": self.fresh_companies,
+                "qualified": len(self.qualified),
+                "needs_review": len(self.needs_review),
+                "rejected": len(self.rejected),
+            },
+            "stages": self.stages,
+            "size_resolution": self.size_resolution,
+            "domain_resolution": self.domain_resolution,
+            "source_status": self.source_status,
+            "coverage": self.coverage,
+            "qualified_leads": [asdict(lead) for lead in self.qualified],
+            "needs_review_leads": [asdict(lead) for lead in self.needs_review],
+            "rejected_leads": [asdict(lead) for lead in self.rejected],
+            "qualification": self.qualification_records,
+            "access": self.access,
+            "pitfalls": self.pitfalls,
+            "plan": self.plan,
+        }
+        if include_records:
+            payload["raw_jobs_detail"] = self.raw_job_records
+            payload["normalized_jobs_detail"] = self.normalized_job_records
+        return _json_safe(payload)
+
+
+class PipelineRunner:
+    """End-to-end orchestration of the NexBase pipeline."""
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        repo: SupabaseRepository | None = None,
+        logger=None,
+        access: AccessLayer | None = None,
+        size_resolver: SizeResolver | None = None,
+        domain_resolver=None,
+    ) -> None:
+        self.settings = settings or get_settings()
+        ensure_logging_configured(self.settings.log_level)
+        self.log = logger or get_logger("nexbase.pipeline.runner")
+        self.repo = repo if repo is not None else SupabaseRepository(settings=self.settings)
+        self.access = access or AccessLayer(settings=self.settings, repo=self.repo)
+        self._size_cache = SizeCache(
+            repo=self.repo, max_age_days=self.settings.size_cache_max_age_days
+        )
+        if size_resolver is not None:
+            self._size_resolver: SizeResolver = size_resolver
+        elif self.settings.size_resolver_enabled:
+            self._size_resolver = WebSizeResolver(
+                access=self.access, logger=self.log,
+                max_pages=self.settings.size_resolver_max_pages,
+            )
+        else:
+            self._size_resolver = NullSizeResolver()
+
+        if domain_resolver is not None:
+            self._domain_resolver = domain_resolver
+        elif self.settings.domain_resolver_enabled:
+            self._domain_resolver = DomainResolver(
+                access=self.access, settings=self.settings, logger=self.log
+            )
+        else:
+            self._domain_resolver = NullDomainResolver()
+        self._domain_cache = DomainCache(
+            repo=self.repo,
+            max_age_days=self.settings.domain_cache_max_age_days,
+            negative_max_age_days=self.settings.domain_negative_cache_days,
+        )
+        self._domain_failures: set[tuple[str, str]] = set()
+        self._domain_confidence: dict[tuple[str, str], str] = {}
+        self._domain_results: dict[tuple[str, str], object] = {}
+        self._domain_searches = 0
+        #: Candidates too weak to attach, kept for a human decision.
+        self._domain_review: dict[tuple[str, str], dict] = {}
+        self._stop_at: str | None = None
+        self._ats_probes_run = 0
+        self._contact_runs = 0
+
+    def _audit(self, event: str, level: str = "INFO", **data) -> None:
+        self.repo.insert_audit(
+            {"event": event, "data": _json_safe(data), "level": level}
+        )
+
+    # ------------------------------------------------------------------
+    def run(
+        self,
+        raw_jobs: list[RawJob] | list[dict] | None = None,
+        ats_params: dict | None = None,
+        jobspy_params: dict | None = None,
+        board_params: dict | None = None,
+        plan: DiscoveryPlan | None = None,
+        profiles: dict[tuple[str, str], CompanyProfile] | None = None,
+        now: datetime | None = None,
+        stop_at: str | None = None,
+        persist: bool = True,
+        enrich_linkedin_signal: bool = False,
+    ) -> PipelineReport:
+        """Run the pipeline. ``stop_at`` may be 'before_contacts'."""
+        self._stop_at = stop_at
+        run_key = plan.run_key if plan is not None else (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        original_repo = self.repo
+        original_access_repo = self.access.repo
+        if not persist:
+            self.repo = InertRepository()
+            self.access.repo = self.repo
+        try:
+            with bind_run(run_key):
+                return self._run(
+                    run_key=run_key,
+                    raw_jobs=raw_jobs,
+                    ats_params=ats_params,
+                    jobspy_params=jobspy_params,
+                    board_params=board_params,
+                    plan=plan,
+                    profiles=profiles,
+                    now=now,
+                    enrich_linkedin_signal=enrich_linkedin_signal,
+                )
+        finally:
+            self.repo = original_repo
+            self.access.repo = original_access_repo
+            self._stop_at = None
+
+    # ------------------------------------------------------------------
+    def _run(
+        self,
+        run_key,
+        raw_jobs=None,
+        ats_params=None,
+        jobspy_params=None,
+        board_params=None,
+        plan=None,
+        profiles=None,
+        now=None,
+        enrich_linkedin_signal=False,
+    ) -> PipelineReport:
+        report = PipelineReport(run_key=run_key)
+        if plan is not None:
+            report.plan = plan.to_dict()
+        self._ats_probes_run = 0
+        self._contact_runs = 0
+        # Each ATS slice is downloaded once per run. Without this the same
+        # jobs.parquet was fetched once per probe - measured live at 4x for
+        # ashby, paylocity and bamboohr in a single three-term run.
+        self._ats_slice_cache = ATSSliceCache(self.log)
+        now = now or datetime.now(timezone.utc)
+        self._audit("PIPELINE_START")
+
+        # --- 1. Discovery -------------------------------------------------
+        with stage(self.log, "discovery", report.stages):
+            if raw_jobs is not None:
+                raw = [r if isinstance(r, RawJob) else RawJob.from_dict(r) for r in raw_jobs]
+            else:
+                # No plan is built here. Discovery runs what was asked for:
+                # a plan, or explicit per-source params.
+                raw = self._discover(ats_params, jobspy_params, board_params, plan, report)
+
+            if enrich_linkedin_signal and raw:
+                try:
+                    LinkedInApplicantEnricher(access=self.access, logger=self.log).enrich(raw)
+                except Exception as exc:
+                    report.append_pitfall(stage="LINKEDIN_SIGNAL", reason=str(exc))
+
+            report.raw_jobs = len(raw)
+            report.raw_job_records = [_json_safe(asdict(r)) for r in raw]
+        if not raw:
+            self._audit("PIPELINE_COMPLETE", result="no_raw_jobs")
+            return report
+
+        # --- 2. Normalization ---------------------------------------------
+        with stage(self.log, "normalization", report.stages):
+            normalized, discarded = Normalizer(self.log).normalize(raw)
+            report.normalized_jobs = len(normalized)
+            report.normalized_job_records = [_json_safe(asdict(n)) for n in normalized]
+
+            for job in discarded:
+                report.append_pitfall(
+                    stage="NORMALIZATION",
+                    reason="NO_COMPANY_NAME",
+                    title=job.title,
+                    url=job.evidence_url,
+                )
+                self.repo.insert_qualification_reason(
+                    {
+                        "stage": "NORMALIZATION",
+                        "reason": "NO_COMPANY_NAME",
+                        "details": {"title": job.title, "url": job.evidence_url},
+                    }
+                )
+
+        # --- 3. Deduplication ---------------------------------------------
+        with stage(self.log, "deduplication", report.stages):
+            aggregates: list[CompanyAggregate] = Deduplicator(self.log).dedupe(normalized)
+            report.companies = len(aggregates)
+
+        # --- 4. Freshness -------------------------------------------------
+        with stage(self.log, "freshness", report.stages):
+            freshness_filter = FreshnessFilter(self.settings, self.log)
+            fresh: list[FreshCompany] = freshness_filter.filter(aggregates, now=now)
+            report.fresh_companies = len(fresh)
+
+        # --- 5 + 6. Qualification and company identification --------------
+        with stage(self.log, "qualification", report.stages):
+            fresh_map = {fc.company.dedup_key: fc for fc in fresh}
+            built_profiles = self._build_profiles(fresh, profiles, now=now)
+            gate = QualificationGate(self.settings, self.log)
+            qual_results = gate.qualify(fresh, built_profiles)
+
+            # Official domains come before size resolution; the result feeds
+            # size resolution and contact discovery.
+            self._resolve_domains(fresh, qual_results, report, now=now)
+
+            # Free public-web size evidence for companies blocked only on
+            # unknown headcount, then re-qualify them.
+            qual_results = self._resolve_sizes(
+                fresh, built_profiles, qual_results, report, now=now
+            )
+            result_map = {fc.company.dedup_key: r for fc, r in zip(fresh, qual_results)}
+
+            report.qualification_records = [
+                self._qualification_dict(fc, r) for fc, r in zip(fresh, qual_results)
+            ]
+
+        # --- 7. Persist and process every company -------------------------
+        # Spend the contact-discovery budget on the best records first: a
+        # QUALIFIED company is worth its ~30 page fetches before one that is
+        # still NEEDS_REVIEW.
+        def _priority(agg):
+            res = result_map.get(agg.dedup_key)
+            status = getattr(res, "status", None)
+            rank = {QualificationStatus.QUALIFIED.value: 0,
+                    QualificationStatus.NEEDS_REVIEW.value: 1}.get(status, 2)
+            return (rank, -agg.hiring_intensity)
+
+        with stage(self.log, "contacts", report.stages):
+            for aggregate in sorted(aggregates, key=_priority):
+                self._process_company(
+                    aggregate, fresh_map, result_map, built_profiles,
+                    freshness_filter, now, report,
+                )
+
+        # --- Reporting ------------------------------------------------------
+        report.access = {
+            "camoufox_fallbacks": self.access.fallback_count,
+            "camoufox_budget": self.settings.camoufox_budget_per_run,
+        }
+
+        self._audit(
+            "PIPELINE_COMPLETE",
+            raw_jobs=report.raw_jobs,
+            companies=report.companies,
+            qualified=len(report.qualified),
+            needs_review=len(report.needs_review),
+            rejected=len(report.rejected),
+        )
+        self.log.info(
+            "pipeline_summary",
+            raw_jobs=report.raw_jobs,
+            companies=report.companies,
+            fresh_companies=report.fresh_companies,
+            qualified=len(report.qualified),
+            needs_review=len(report.needs_review),
+            rejected=len(report.rejected),
+        )
+        return report
+
+    def _process_company(self, aggregate, fresh_map, result_map, built_profiles,
+                         freshness_filter, now, report) -> None:
+        """Persist one company and its jobs, then record its outcome."""
+        key = aggregate.dedup_key
+        fc = fresh_map.get(key)
+        result = result_map.get(key)
+        profile = built_profiles.get(key)
+
+        company_id = self._persist_company(aggregate, fc, result, profile)
+        self._persist_jobs(aggregate, fc, company_id, freshness_filter, now)
+
+        if fc is None:
+            report.rejected.append(
+                RejectedLead(
+                    aggregate.company_name_normalized,
+                    aggregate.domain,
+                    "FRESHNESS",
+                    ["NO_FRESH_JOBS"],
+                )
+            )
+            report.append_pitfall(
+                stage="FRESHNESS",
+                company=aggregate.company_name_normalized,
+                reason="NO_FRESH_JOBS",
+            )
+            self.repo.insert_qualification_reason(
+                {"company_id": company_id, "stage": "FRESHNESS", "reason": "NO_FRESH_JOBS"}
+            )
+            return
+
+        self._record_hiring_history(company_id, aggregate, fc)
+
+        for job, fres in fc.rejected_jobs:
+            self.repo.insert_qualification_reason(
+                {
+                    "company_id": company_id,
+                    "stage": "FRESHNESS",
+                    "reason": fres.reason,
+                    "details": {
+                        "posting_date": job.posting_date,
+                        "age_days": fres.age_days,
+                        "title": job.title,
+                    },
+                }
+            )
+
+        if result is None:
+            return
+
+        if result.status == QualificationStatus.REJECTED.value:
+            report.rejected.append(
+                RejectedLead(
+                    aggregate.company_name_normalized,
+                    aggregate.domain,
+                    "QUALIFICATION",
+                    result.reasons,
+                )
+            )
+            for reason in result.reasons:
+                report.append_pitfall(
+                    stage="QUALIFICATION",
+                    company=aggregate.company_name_normalized,
+                    reason=reason,
+                )
+                self.repo.insert_qualification_reason(
+                    {"company_id": company_id, "stage": "QUALIFICATION", "reason": reason}
+                )
+            return
+
+        lead = self._process_accepted(aggregate, fc, result, profile, company_id, report)
+        if result.status == QualificationStatus.QUALIFIED.value:
+            report.qualified.append(lead)
+        else:
+            report.needs_review.append(lead)
+
+    # ------------------------------------------------------------------
+    # Discovery
+    # ------------------------------------------------------------------
+    def _discover(
+        self, ats_params, jobspy_params, board_params, plan, report
+    ) -> list[RawJob]:
+        raw: list[RawJob] = []
+
+        if plan is not None:
+            raw.extend(self._discover_from_plan(plan, report))
+            return raw
+
+        if ats_params:
+            try:
+                raw.extend(self._ats_discovery().search(**ats_params))
+            except Exception as exc:
+                report.append_pitfall(stage="ATS_DISCOVERY", reason=str(exc))
+                self.log.error("ats_discovery_error", error=str(exc))
+
+        if jobspy_params:
+            try:
+                raw.extend(JobSpyDiscovery(self.settings, self.log).search(**jobspy_params))
+            except Exception as exc:
+                report.append_pitfall(stage="JOBSPY_DISCOVERY", reason=str(exc))
+                self.log.error("jobspy_discovery_error", error=str(exc))
+
+        if board_params:
+            try:
+                names = board_params.get("boards") or self.settings.board_sites
+                for scraper in build_board_scrapers(names, access=self.access, logger=self.log):
+                    raw.extend(
+                        scraper.search(
+                            search_terms=board_params["search_terms"],
+                            locations=board_params["locations"],
+                            pages=board_params.get("pages", 1),
+                            client_industry=board_params.get("client_industry"),
+                        )
+                    )
+            except Exception as exc:
+                report.append_pitfall(stage="BOARD_DISCOVERY", reason=str(exc))
+                self.log.error("board_discovery_error", error=str(exc))
+
+        return raw
+
+    def _discover_from_plan(self, plan: DiscoveryPlan, report) -> list[RawJob]:
+        """Execute the operator's plan, one probe at a time.
+
+        A probe is a ``(search_term, location)`` PAIR the operator chose. Each
+        probe is executed exactly once per source and gets its own
+        ``discovery_runs`` row, so the audit trail records the query that ran.
+
+        Each source is asked for as much as it will give within the plan's
+        coverage budget, and records why it stopped.
+        """
+        planner = DiscoveryPlanner(self.settings, repo=self.repo, logger=self.log)
+        jobspy = JobSpyDiscovery(self.settings, self.log)
+        raw: list[RawJob] = []
+        board_names = plan.board_sites or self.settings.board_sites
+        status: dict[str, dict] = {}
+        coverage = CoverageReport()
+
+        def note(source, jobs=0, error=None):
+            row = status.setdefault(
+                source, {"jobs": 0, "calls": 0, "errors": 0, "last_error": None}
+            )
+            row["calls"] += 1
+            row["jobs"] += jobs
+            if error:
+                row["errors"] += 1
+                row["last_error"] = error
+
+        for probe in plan.probes:
+            # The sector the operator selected, carried as *search intent*. It
+            # is never asserted as a fact about the employer.
+            intent = probe.client_industry or None
+            terms, locations = [probe.search_term], [probe.location]
+
+            run_id = planner.record(plan, probe, source="jobspy")
+            try:
+                found = jobspy.search(
+                    search_terms=terms, locations=locations, site_names=plan.sites,
+                    hours_old=plan.hours_old, client_industry=intent,
+                    results_wanted=plan.max_results_per_query,
+                )
+                raw.extend(found)
+                planner.close(run_id, len(found))
+                for outcome in getattr(jobspy, "last_outcomes", []):
+                    coverage.add(outcome)
+                for site, site_status in getattr(jobspy, "site_status", {}).items():
+                    note(f"jobspy:{site}", site_status["jobs"])
+                    if site_status["last_error"]:
+                        note(f"jobspy:{site}", error=site_status["last_error"])
+            except Exception as exc:
+                planner.close(run_id, 0, status="FAILED", error=str(exc))
+                note("jobspy", error=str(exc))
+                coverage.add(SourceOutcome(
+                    source="jobspy", query=probe.search_term,
+                    location_scope=probe.location, stop_reason="ERROR",
+                    error_type=type(exc).__name__, error_message=str(exc)))
+                report.append_pitfall(
+                    stage="JOBSPY_DISCOVERY", term=probe.search_term, reason=str(exc)
+                )
+
+            for scraper in build_board_scrapers(
+                board_names, access=self.access, logger=self.log
+            ):
+                site = scraper.config.site
+                run_id = planner.record(plan, probe, source=site)
+                try:
+                    found = scraper.search(
+                        search_terms=terms, locations=locations,
+                        pages=plan.max_pages_per_query,
+                        max_results=plan.max_results_per_query,
+                        client_industry=intent,
+                    )
+                    raw.extend(found)
+                    outcomes = getattr(scraper, "last_outcomes", [])
+                    for outcome in outcomes:
+                        coverage.add(outcome)
+                    planner.close(run_id, len(found),
+                                  outcome=outcomes[-1] if outcomes else None)
+                    note(f"board:{site}", len(found))
+                except Exception as exc:
+                    planner.close(run_id, 0, status="FAILED", error=str(exc))
+                    note(f"board:{site}", error=str(exc))
+                    coverage.add(SourceOutcome(
+                        source=f"board:{site}", query=probe.search_term,
+                        location_scope=probe.location, stop_reason="ERROR",
+                        error_type=type(exc).__name__, error_message=str(exc)))
+                    report.append_pitfall(
+                        stage="BOARD_DISCOVERY", source=site,
+                        term=probe.search_term, reason=str(exc),
+                    )
+
+            ats_found = self._ats_probe(plan, probe, planner, report, coverage)
+            raw.extend(ats_found)
+            if plan.ats_slices:
+                note("ats", len(ats_found))
+
+        for source, row in status.items():
+            row["outcome"] = (
+                "ERROR" if row["errors"] and not row["jobs"]
+                else "SUCCESS" if row["jobs"] else "EMPTY"
+            )
+        report.source_status = status
+        report.coverage = coverage.as_dict()
+        self.log.info("source_status", **{k: v["outcome"] for k, v in status.items()})
+        for source, row in coverage.by_source().items():
+            self.log.info(
+                "source_coverage", source=source, queries=row["queries"],
+                pages=row["pages"], returned=row["jobs_returned"],
+                accepted=row["jobs_accepted"], duplicates=row["duplicates"],
+                stop_reasons=row["stop_reasons"],
+                limited_by_nexbase=row["limited_by_nexbase"],
+            )
+        self.log.info(
+            "plan_discovery_complete",
+            probes=len(plan.probes), sources=len(board_names) + 2, raw_jobs=len(raw),
+        )
+        return raw
+
+    def _ats_probe(self, plan, probe, planner, report, coverage=None) -> list[RawJob]:
+        """Run one planned probe against the ATS slices.
+
+        The operator's own search term and location drive the query, so an ATS
+        row is attributable to the search that found it. ``ats_scrapers`` has no
+        ``hours_old``; the normal freshness filter handles that downstream, and
+        that limitation is recorded rather than worked around.
+        """
+        if not plan.ats_slices:
+            return []
+        if self._ats_probes_run >= self.settings.ats_max_probes:
+            # Our budget, not the dataset's. Recorded as such.
+            if coverage is not None:
+                coverage.add(SourceOutcome(
+                    source="ats", query=probe.search_term,
+                    location_scope=probe.location, stop_reason=BUDGET_REACHED,
+                    error_message=(
+                        f"ats_max_probes={self.settings.ats_max_probes} reached"),
+                ))
+            return []
+        self._ats_probes_run += 1
+
+        run_id = planner.record(plan, probe, source="ats")
+        intent = probe.client_industry or None
+        try:
+            from nexbase.discovery.ats_discovery import ats_location_filter
+
+            state = ats_location_filter(probe.location)
+            found = self._ats_discovery().search(
+                # "Columbus, OH" matches almost nothing in the ATS dataset, and
+                # a nationwide scope has no state to narrow to at all; both mean
+                # no location filter rather than an invented one.
+                query=probe.search_term, location=state,
+                ats=plan.ats_slices, limit=plan.max_results_per_query,
+                client_industry=intent,
+            )
+            self._resolve_ats_sites(found)
+            outcome = SourceOutcome(
+                source="ats", query=probe.search_term,
+                location_scope=probe.location, jobs_returned=len(found),
+                jobs_accepted=len(found),
+                stop_reason=(BUDGET_REACHED
+                             if len(found) >= plan.max_results_per_query
+                             else SOURCE_EXHAUSTED),
+            )
+            if coverage is not None:
+                coverage.add(outcome)
+            planner.close(run_id, len(found), outcome=outcome)
+            return found
+        except Exception as exc:
+            planner.close(run_id, 0, status="FAILED", error=str(exc))
+            if coverage is not None:
+                coverage.add(SourceOutcome(
+                    source="ats", query=probe.search_term,
+                    location_scope=probe.location, stop_reason="ERROR",
+                    error_type=type(exc).__name__, error_message=str(exc)))
+            report.append_pitfall(
+                stage="ATS_DISCOVERY", term=probe.search_term, reason=str(exc)
+            )
+            return []
+
+    def _ats_discovery(self) -> ATSDiscovery:
+        """An ATS client bound to this run's slice cache."""
+        return ATSDiscovery(self.settings, self.log,
+                            slice_cache=getattr(self, "_ats_slice_cache", None))
+
+    def _resolve_ats_sites(self, jobs: list[RawJob]) -> None:
+        """Fill company websites for ATS rows from the packaged company directory.
+
+        The ATS jobs dataset has no website column, so without this every
+        ATS-sourced company is domain-less. Only URLs that normalize to a real
+        employer domain are attached - a greenhouse.io careers link identifies
+        the platform, so it is left null rather than guessed at.
+        """
+        if not self.settings.ats_resolve_company_sites:
+            return
+        names = sorted({j.company_name for j in jobs if j.company_name and not j.company_website})
+        if not names:
+            return
+        # The directory publishes no location for every row, but the posting
+        # does - pass it so a same-named firm elsewhere can be ruled out.
+        locations = {}
+        for job in jobs:
+            if job.company_name and job.location:
+                locations.setdefault(job.company_name, job.location)
+        try:
+            sites = self._ats_discovery().resolve_company_sites(
+                names, locations=locations)
+        except Exception as exc:
+            self.log.warning("ats_company_sites_error", error=str(exc))
+            return
+        from nexbase.pipeline.normalize import normalize_domain
+
+        attached = ambiguous = renamed = 0
+        for job in jobs:
+            match = sites.get(job.company_name or "")
+            if not match:
+                continue
+            # Why this URL was believed - or why it was not - travels with the
+            # job, so a wrong attachment is traceable rather than silent.
+            job.raw = dict(job.raw or {})
+            job.raw["ats_company_match"] = {
+                "source": "ATS_DIRECTORY", "status": match["status"],
+                "matched_name": match.get("matched_name"),
+                "name_similarity": match.get("similarity"),
+                "location_match": match.get("location_match"),
+                "confidence": match.get("confidence"),
+                "reason": match.get("reason"),
+                "url": match.get("url"),
+            }
+            if match["status"] != "MATCHED":
+                if match["status"] == "AMBIGUOUS":
+                    ambiguous += 1
+                continue
+            # The jobs dataset stores the ATS tenant slug, so the employer
+            # reaches the pipeline as "componentrepairtechnologies". The
+            # directory publishes the real name; adopt it so the dedup key,
+            # the domain search and the lead a human reads all use it.
+            matched_name = str(match.get("matched_name") or "").strip()
+            if matched_name and matched_name.lower() != (job.company_name or "").lower():
+                job.raw["ats_company_slug"] = job.company_name
+                job.company_name = matched_name
+                renamed += 1
+            if not normalize_domain(match["url"] or ""):
+                continue
+            job.company_website = match["url"]
+            attached += 1
+        self.log.info("ats_company_sites_attached", requested=len(names),
+                      attached=attached, ambiguous=ambiguous, renamed=renamed)
+
+    # ------------------------------------------------------------------
+    def _build_profiles(self, fresh, provided, now=None) -> dict[tuple[str, str], CompanyProfile]:
+        """Assemble profiles, applying the size-evidence precedence.
+
+        explicit provided -> cached DB size -> observed job-board size.
+        The public-web resolver runs later, only for companies that reach
+        NEEDS_REVIEW purely because size was unknown (see _resolve_sizes).
+        """
+        provided = provided or {}
+        profiles: dict[tuple[str, str], CompanyProfile] = {}
+        for fc in fresh:
+            key = fc.company.dedup_key
+            if key in provided:
+                profiles[key] = provided[key]
+                continue
+
+            runs = 0
+            cached = None
+            if self.repo.configured:
+                company = self.repo.find_company(key[0], key[1])
+                if company:
+                    runs = int(company.get("persistent_hiring_runs") or 0)
+                cached_evidence = self._size_cache.lookup(key[0], key[1], now=now)
+                if cached_evidence is not None:
+                    cached = cached_evidence.as_enrichment()
+
+            profiles[key] = build_profile(
+                fc, persistent_hiring_runs=runs, enrichment=cached,
+            )
+        return profiles
+
+    # ------------------------------------------------------------------
+    def _resolve_sizes(self, fresh, profiles, results, report, now=None):
+        """Second pass: resolve size for companies blocked ONLY on unknown size.
+
+        Paid enrichment runs only on QUALIFIED companies, so a company flagged
+        NEEDS_REVIEW for unknown size could never obtain the fact that would
+        clear it. This closes that deadlock with free public-web evidence,
+        then re-qualifies.
+
+        Companies rejected for any other reason are never touched.
+        """
+        blocked = [
+            (fc, res) for fc, res in zip(fresh, results)
+            if res.status == QualificationStatus.NEEDS_REVIEW.value
+            and "EMPLOYEE_SIZE_UNKNOWN" in res.review_flags
+        ]
+        stats = {
+            "candidates": len(blocked), "resolved": 0, "unresolved": 0,
+            "no_domain": 0, "in_range": 0, "oversize": 0, "undersize": 0,
+            "newly_qualified": 0, "newly_rejected": 0,
+            "domains_attempted": 0, "domains_resolved": 0,
+            "domain_high": 0, "domain_medium": 0, "domain_rejected": 0,
+        }
+        if not blocked:
+            report.size_resolution = stats
+            return results
+
+        self.log.info("size_resolution_start", candidates=len(blocked))
+        gate = QualificationGate(self.settings, self.log)
+        by_key = {fc.company.dedup_key: i for i, fc in enumerate(fresh)}
+        updated = list(results)
+
+        for fc, previous in blocked:
+            company = fc.company
+            # The domain stage has already run; reuse its verdict rather than
+            # searching again.
+            domain = self.domain_for(company)
+            if not domain:
+                stats["domains_attempted"] += 1
+                stats["no_domain"] += 1
+                stats["unresolved"] += 1
+                continue
+            if not company.domain:
+                stats["domains_attempted"] += 1
+                stats["domains_resolved"] += 1
+                key_conf = self._domain_confidence.get(company.dedup_key)
+                if key_conf == "HIGH":
+                    stats["domain_high"] += 1
+                elif key_conf == "MEDIUM":
+                    stats["domain_medium"] += 1
+            try:
+                evidence = self._size_resolver.resolve(
+                    domain, company.company_name_normalized
+                )
+            except Exception as exc:
+                report.append_pitfall(
+                    stage="SIZE_RESOLUTION",
+                    company=company.company_name_normalized, reason=str(exc),
+                )
+                evidence = None
+
+            if evidence is None:
+                stats["unresolved"] += 1
+                continue
+
+            stats["resolved"] += 1
+            key = company.dedup_key
+            profile = build_profile(
+                fc,
+                persistent_hiring_runs=profiles[key].persistent_hiring_runs,
+                enrichment=evidence.as_enrichment(),
+            )
+            profiles[key] = profile
+            rescored = gate.qualify([fc], {key: profile})[0]
+            updated[by_key[key]] = rescored
+
+            verdict = rescored.breakdown.get("size_verdict")
+            stats[{"IN_RANGE": "in_range", "OVERSIZE": "oversize",
+                   "UNDERSIZE": "undersize"}.get(verdict, "unresolved")] += 1
+
+            # Size is now known, so out-of-range is a decision, not a question.
+            # The gate has already encoded it in `rescored`; this only counts.
+            if verdict in ("OVERSIZE", "UNDERSIZE"):
+                if rescored.status == QualificationStatus.REJECTED.value:
+                    stats["newly_rejected"] += 1
+            elif rescored.status == QualificationStatus.QUALIFIED.value:
+                stats["newly_qualified"] += 1
+
+            if evidence.url:
+                self.repo.insert_evidence({
+                    "record_type": "COMPANY", "key": "employee_size",
+                    "value": f"{evidence.employee_size_min}-{evidence.employee_size_max}",
+                    "url": evidence.url, "source_type": evidence.source,
+                    "source_priority": int(SourcePriority.PUBLIC_WEB.value),
+                })
+            self.log.info(
+                "size_resolution_applied",
+                company=company.company_name_normalized,
+                verdict=verdict, status=rescored.status, url=evidence.url,
+            )
+
+        report.size_resolution = stats
+        self.log.info("size_resolution_complete", **stats)
+        return updated
+
+    # ------------------------------------------------------------------
+    def _resolve_domains(self, fresh, results, report, now=None) -> dict:
+        """Resolve an official domain for every fresh company that lacks one.
+
+        Companies already carrying a trusted employer domain are skipped, as are
+        companies the gate rejected outright - there is nothing to act on. The
+        run-level budget stops a large plan from spending the whole run here.
+        """
+        stats = {"candidates": 0, "resolved": 0, "cached": 0, "unresolved": 0,
+                 "skipped_budget": 0,
+                 "budget": self.settings.domain_resolve_max_per_run}
+        budget = self.settings.domain_resolve_max_per_run
+        by_key = {fc.company.dedup_key: r for fc, r in zip(fresh, results)}
+
+        def _worth(fc):
+            """Order candidates by how much a domain would be worth.
+
+            The budget is finite, so spend it on the companies most likely to
+            become leads: a QUALIFIED company first, then one still in review,
+            and within each the strongest hiring signal and freshest posting.
+            """
+            result = by_key.get(fc.company.dedup_key)
+            status = getattr(result, "status", None)
+            rank = {QualificationStatus.QUALIFIED.value: 0,
+                    QualificationStatus.NEEDS_REVIEW.value: 1}.get(status, 2)
+            return (rank, -fc.hiring_intensity, fc.best_priority or 9)
+
+        pending = [
+            fc for fc in fresh
+            if not fc.company.domain
+            and getattr(by_key.get(fc.company.dedup_key), "status", None)
+            != QualificationStatus.REJECTED.value
+        ]
+        pending.sort(key=_worth)
+        stats["pending"] = len(pending)
+        stats["time_budget_seconds"] = self.settings.domain_resolve_max_seconds
+        started = _time.monotonic()
+
+        for fc in pending:
+            elapsed = _time.monotonic() - started
+            if elapsed >= self.settings.domain_resolve_max_seconds:
+                stats["skipped_time"] = len(pending) - stats["candidates"]
+                stats["stopped_on"] = "TIME"
+                self.log.info("domain_resolution_time_exhausted",
+                              seconds=round(elapsed, 1),
+                              skipped=stats["skipped_time"])
+                break
+            company = fc.company
+            stats["candidates"] += 1
+            cached_before = self._domain_cache.hits
+            review_before = len(self._domain_review)
+            searched_before = self._domain_searches
+            found = self._resolve_domain(company, report, now=now)
+            if found and self._domain_cache.hits > cached_before:
+                stats["cached"] += 1
+            elif found:
+                stats["resolved"] += 1
+            elif len(self._domain_review) > review_before:
+                stats["needs_review"] = stats.get("needs_review", 0) + 1
+            else:
+                stats["unresolved"] += 1
+            if self._domain_searches > searched_before:
+                budget -= 1
+                if budget <= 0:
+                    stats["skipped_budget"] = len(pending) - stats["candidates"]
+                    stats["stopped_on"] = "COUNT"
+                    self.log.info("domain_resolution_budget_exhausted",
+                                  limit=self.settings.domain_resolve_max_per_run,
+                                  skipped=stats["skipped_budget"])
+                    break
+
+        stats["elapsed_seconds"] = round(_time.monotonic() - started, 1)
+        report.domain_resolution = stats
+        self.log.info("domain_resolution_complete", **stats)
+        return stats
+
+    def domain_for(self, company) -> str | None:
+        """Strongest domain known for a company: source-provided, else resolved.
+
+        A source-provided domain is never replaced by a searched one - it is the
+        stronger evidence, and the deduplication key depends on it.
+        """
+        if getattr(company, "domain", None):
+            return company.domain
+        result = self._domain_results.get(company.dedup_key)
+        return getattr(result, "domain", None)
+
+    # ------------------------------------------------------------------
+    def _resolve_domain(self, company, report, now=None) -> str | None:
+        """Establish an official domain. Only HIGH/MEDIUM is attached.
+
+        A verified domain persisted by an earlier run is reused outright; the
+        search only runs when no valid cached domain exists.
+        """
+        key = company.dedup_key
+        cached = self._domain_cache.lookup(key[0], key[1], now=now)
+        if cached is not None:
+            self._domain_confidence[key] = cached.confidence.value
+            self._domain_results[key] = cached
+            self.log.info("domain_cache_hit", company=company.company_name_normalized,
+                          domain=cached.domain)
+            return cached.domain
+
+        # A recent failed attempt suppresses another expensive search until the
+        # negative TTL expires. Never permanent.
+        if self._domain_cache.suppresses_search(key[0], key[1], now=now):
+            self.log.info("domain_negative_cache_hit",
+                          company=company.company_name_normalized,
+                          ttl_days=self.settings.domain_negative_cache_days)
+            return None
+
+        self._domain_searches += 1
+        try:
+            result = self._domain_resolver.resolve(
+                company.company_name or company.company_name_normalized,
+                existing_domain=company.domain or None,
+                source_urls=[j.company_website for j in company.jobs if j.company_website],
+                location=company.location,
+            )
+        except Exception as exc:
+            report.append_pitfall(stage="DOMAIN_RESOLUTION",
+                                  company=company.company_name_normalized,
+                                  reason=str(exc))
+            return None
+
+        if not result.acceptable:
+            # A plausible-but-unconfirmed candidate is kept for a human rather
+            # than attached or thrown away.
+            if getattr(result, "needs_review", False):
+                self._domain_review[company.dedup_key] = {
+                    "candidate_domain": result.domain,
+                    "confidence": result.confidence.value,
+                    "name_affinity": result.signals.get("name_affinity"),
+                    "evidence_url": result.evidence_url,
+                    "reason": result.reason,
+                }
+                self.log.info("domain_needs_review",
+                              company=company.company_name_normalized,
+                              candidate=result.domain,
+                              confidence=result.confidence.value,
+                              affinity=result.signals.get("name_affinity"))
+                return None
+            # Remember the failure so the next run does not repeat the search.
+            self._domain_failures.add(company.dedup_key)
+            self.log.info("domain_unresolved",
+                          company=company.company_name_normalized,
+                          confidence=result.confidence.value, reason=result.reason)
+            return None
+
+        self._domain_confidence[company.dedup_key] = result.confidence.value
+        self._domain_results[company.dedup_key] = result
+        return result.domain
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def _persist_company(self, aggregate, fresh, result, profile) -> str | None:
+        status = QualificationStatus.PENDING.value
+        score = None
+        reasons: list[str] = []
+        flags: list[str] = []
+        breakdown: dict = {}
+        if result is not None:
+            status = result.status
+            score = result.score
+            reasons = result.reasons
+            flags = result.review_flags
+            breakdown = result.breakdown
+
+        data = {
+            "normalized_name": aggregate.company_name_normalized or "NO_NAME",
+            "normalized_domain": aggregate.domain or "NO_DOMAIN",
+            "display_name": aggregate.company_name,
+            "domain": aggregate.domain or None,
+            "website": aggregate.company_website,
+            "location": aggregate.location,
+            "qualification_status": status,
+            "qualification_score": score,
+            "qualification_reasons": reasons,
+            "qualification_breakdown": _json_safe(breakdown),
+            "review_flags": flags,
+            "hiring_intensity": aggregate.hiring_intensity,
+            "min_applicant_count": aggregate.min_applicant_count,
+            "source_type": aggregate.jobs[0].source_type if aggregate.jobs else None,
+            "source_priority": aggregate.best_source_priority,
+            "last_seen_at": datetime.now(timezone.utc).isoformat(),
+            "raw_payload": {"source_sites": aggregate.source_sites},
+        }
+
+        if aggregate.dedup_key in self._domain_failures:
+            data.update(negative_domain_row())
+
+        resolved = self._domain_results.get(aggregate.dedup_key)
+        if resolved is not None:
+            # Only HIGH/MEDIUM reach here; domain_row() drops anything else.
+            # normalized_domain stays the dedup key and is never rewritten.
+            data.update(domain_row(resolved))
+
+        if profile is not None:
+            data.update(
+                {
+                    "industry": profile.industry,
+                    "client_industry": profile.client_industry,
+                    "industry_source": profile.industry_source,
+                    "employee_size_min": profile.employee_size_min,
+                    "employee_size_max": profile.employee_size_max,
+                    "employee_size_source": profile.size_source,
+                    "internal_ta_size": profile.internal_ta.ta_role_count,
+                    "internal_ta_verdict": "MATURE" if profile.internal_ta.is_mature else "OK",
+                }
+            )
+        if result is not None:
+            data["is_staffing_agency"] = bool(result.breakdown.get("is_staffing_agency"))
+            data["is_direct_employer"] = not data["is_staffing_agency"]
+
+        return self.repo.upsert_company(data)
+
+    def _persist_jobs(self, aggregate, fresh, company_id, freshness_filter, now) -> None:
+        fresh_lookup = {}
+        if fresh is not None:
+            for job, res in fresh.fresh_jobs + fresh.rejected_jobs:
+                fresh_lookup[id(job)] = res
+
+        for job in aggregate.jobs:
+            res = fresh_lookup.get(id(job)) or freshness_filter.evaluate(job, now=now)
+            job_id = self.repo.upsert_job(
+                {
+                    "company_id": company_id,
+                    "external_id": job.external_id or job.application_url,
+                    "title": job.title,
+                    "title_normalized": job.title_normalized,
+                    "location": job.location,
+                    "location_normalized": job.location_normalized,
+                    "description": (job.description or "")[:20000] or None,
+                    "posting_date": job.posting_date,
+                    "posted_at": job.posted_at.isoformat() if job.posted_at else None,
+                    "age_days": round(res.age_days, 3) if res.age_days is not None else None,
+                    "application_url": job.application_url,
+                    "evidence_url": job.evidence_url,
+                    "ats_platform": job.ats_platform,
+                    "is_fresh": res.keep,
+                    "freshness_priority": res.priority,
+                    "freshness_reason": res.reason,
+                    "applicant_count": job.applicant_count,
+                    "source_type": job.source_type,
+                    "source_site": job.source_site,
+                    "source_priority": job.source_priority,
+                    "last_seen_at": datetime.now(timezone.utc).isoformat(),
+                    "raw_payload": _json_safe(job.raw),
+                }
+            )
+            if job.posting_date:
+                self.repo.insert_evidence(
+                    {
+                        "record_type": "JOB",
+                        "record_id": job_id,
+                        "key": "posting_date",
+                        "value": job.posting_date,
+                        "url": job.evidence_url,
+                        "source_type": job.source_type,
+                        "source_priority": job.source_priority,
+                    }
+                )
+
+    def _record_hiring_history(self, company_id, aggregate, fresh) -> None:
+        if company_id is None:
+            return
+        self.repo.upsert_hiring_history(
+            {
+                "company_id": company_id,
+                "observed_on": date.today().isoformat(),
+                "open_jobs": aggregate.hiring_intensity,
+                "fresh_jobs": fresh.hiring_intensity,
+            }
+        )
+        runs = self.repo.count_hiring_history(company_id)
+        if runs:
+            self.repo.update_company(company_id, {"persistent_hiring_runs": runs})
+
+    # ------------------------------------------------------------------
+    # Steps 7-9 for an accepted company
+    # ------------------------------------------------------------------
+    def _process_accepted(
+        self, aggregate, fresh, result, profile, company_id, report
+    ) -> QualifiedLead:
+        company_name = aggregate.company_name_normalized
+        # Prefer a verified official domain over the board's profile URL; that
+        # is the entire point of resolving one.
+        resolved_domain = self.domain_for(aggregate)
+        website = aggregate.company_website
+        if not website and resolved_domain:
+            website = f"https://{resolved_domain}"
+        job_urls = [j.evidence_url for j, _ in fresh.fresh_jobs if j.evidence_url]
+        board_urls = [j.company_url for j, _ in fresh.fresh_jobs if j.company_url]
+        job_titles = [j.title for j, _ in fresh.fresh_jobs]
+
+        lead = QualifiedLead(
+            company_name=company_name,
+            rejection_reasons=list(result.reasons),
+            display_name=aggregate.company_name,
+            domain=aggregate.domain or resolved_domain,
+            website=website,
+            location=aggregate.location,
+            status=result.status,
+            score=result.score,
+            job_count=fresh.hiring_intensity,
+            freshness_priority=fresh.best_priority,
+            client_industry=getattr(profile, "client_industry", None),
+            industry_source=getattr(profile, "industry_source", None),
+            employee_size=_size_label(profile),
+            employee_size_source=getattr(profile, "size_source", None),
+            applicant_count=aggregate.min_applicant_count,
+            review_flags=result.review_flags,
+            evidence_url=job_urls[0] if job_urls else None,
+            source_sites=aggregate.source_sites,
+        )
+
+        if self._stop_at == "before_contacts":
+            return lead
+
+        # Contact scraping for NEEDS_REVIEW companies is configurable.
+        if (
+            result.status == QualificationStatus.NEEDS_REVIEW.value
+            and not self.settings.contacts_for_review_companies
+        ):
+            self.log.info(
+                "contact_discovery_deferred",
+                company=company_name,
+                reason="NEEDS_REVIEW",
+                flags=result.review_flags,
+            )
+            return lead
+
+        # Contact discovery costs ~30 page fetches per company. Without a
+        # ceiling a large run never reaches the end of its company list, so the
+        # budget is spent and then discovery stops - the remaining companies
+        # keep their jobs, evidence and review status.
+        if self._contact_runs >= self.settings.contacts_max_companies_per_run:
+            self.log.info(
+                "contact_discovery_budget_exhausted",
+                company=company_name,
+                limit=self.settings.contacts_max_companies_per_run,
+            )
+            lead.review_flags = list(lead.review_flags) + ["CONTACTS_NOT_ATTEMPTED"]
+            return lead
+        self._contact_runs += 1
+
+        # --- 7. Contact discovery -----------------------------------------
+        candidates: list[ContactCandidate] = []
+        page_emails: list[str] = []
+        found = None
+        try:
+            discovery = ContactDiscovery(
+                access=self.access, settings=self.settings, logger=self.log
+            )
+            found = discovery.discover(company_name, website, job_urls, board_urls)
+            candidates = found.candidates
+            page_emails = found.page_emails
+        except Exception as exc:
+            report.append_pitfall(
+                stage="CONTACT_DISCOVERY", company=company_name, reason=str(exc)
+            )
+
+        selected = ContactRanker(self.settings, self.log).select(candidates, job_titles)
+        contact_dicts = self._persist_contacts(company_id, selected)
+
+        # Addresses seen on the pages visited count as observed evidence even
+        # when they could not be attributed to a named person.
+        email_result = EmailDiscovery(self.log).discover(
+            contact_dicts,
+            extra_emails=list(aggregate.observed_emails) + page_emails,
+        )
+        # Contact discovery reads ~30 pages per company. If one of them stated
+        # an explicit headcount, that is free size evidence: record it and
+        # re-score, so an unknown-size company can clear review without any
+        # extra fetch. Explicit statements only - nothing is inferred.
+        size_found = getattr(found, "size_evidence", None) if found else None
+        if size_found is not None and profile is not None and not profile.size_known:
+            self._apply_free_size_evidence(company_id, fresh, profile, result,
+                                           lead, size_found)
+
+        lead.contacts = contact_dicts
+        lead.emails = email_result.preferred
+        lead.email_status = email_result.status
+        lead.observed_emails = [o.as_dict() for o in email_result.observed]
+        lead.named_contact_emails = [o.as_dict() for o in email_result.named]
+        lead.role_mailboxes = list(email_result.role)
+        lead.discovery_stages = list(getattr(found, "stages_used", []))
+        lead.portals_searched = sorted(
+            {j.source_site for j in fresh.company.jobs if j.source_site}
+        )
+        resolved_result = self._domain_results.get(aggregate.dedup_key)
+        if resolved_result is not None:
+            lead.domain_confidence = getattr(
+                getattr(resolved_result, "confidence", None), "value", None)
+            lead.domain_source = getattr(resolved_result, "source", None)
+        # A company mailbox is not a person, so it must not be forced into a
+        # contact row. It is recorded as company-level evidence instead, which
+        # keeps its provenance and stops it disappearing after the run.
+        self._persist_company_emails(
+            company_id, list(aggregate.observed_emails) + page_emails, website
+        )
+
+        return lead
+
+    # ------------------------------------------------------------------
+    def _apply_free_size_evidence(self, company_id, fresh, profile, result,
+                                  lead, evidence) -> None:
+        """Re-score a company whose size turned up on a page we already read."""
+        key = fresh.company.dedup_key
+        rebuilt = build_profile(
+            fresh,
+            persistent_hiring_runs=profile.persistent_hiring_runs,
+            enrichment=evidence.as_enrichment(),
+        )
+        rescored = QualificationGate(self.settings, self.log).qualify(
+            [fresh], {key: rebuilt})[0]
+
+        lead.employee_size = _size_label(rebuilt)
+        lead.employee_size_source = rebuilt.size_source
+        lead.status = rescored.status
+        lead.review_flags = rescored.review_flags
+        lead.score = rescored.score
+
+        if company_id is not None:
+            self.repo.update_company(company_id, {
+                "employee_size_min": rebuilt.employee_size_min,
+                "employee_size_max": rebuilt.employee_size_max,
+                "employee_size_source": rebuilt.size_source,
+                "qualification_status": rescored.status,
+                "review_flags": rescored.review_flags,
+            })
+            # Persisted against the company so the evidence is never orphaned.
+            self.repo.insert_evidence({
+                "record_type": "COMPANY", "record_id": company_id,
+                "key": "employee_size",
+                "value": f"{rebuilt.employee_size_min}-{rebuilt.employee_size_max}",
+                "url": evidence.url, "source_type": evidence.source,
+                "source_priority": int(SourcePriority.PUBLIC_WEB.value),
+                "raw_payload": {"snippet": evidence.snippet,
+                                "discovery_stage": "CONTACT_DISCOVERY"},
+            })
+        self.log.info("size_from_contact_pages", company=lead.company_name,
+                      size=lead.employee_size, status=rescored.status,
+                      url=evidence.url)
+
+    def _persist_company_emails(self, company_id, emails, source_url) -> int:
+        """Store addresses observed on a company's pages as company evidence.
+
+        Uses the existing ``evidence`` table rather than a new one: these are
+        observed facts with a URL, which is exactly what that table is for.
+        """
+        from nexbase.contacts.extraction import is_role_email
+
+        stored = 0
+        for address in dict.fromkeys(e.strip().lower() for e in emails if e):
+            self.repo.insert_evidence({
+                "record_type": "COMPANY",
+                "record_id": company_id,
+                "key": "company_email",
+                "value": address,
+                "url": source_url,
+                "source_type": SourceType.PUBLIC_WEB.value,
+                "source_priority": int(SourcePriority.PUBLIC_WEB.value),
+                "raw_payload": {
+                    "email_type": "ROLE" if is_role_email(address) else "UNATTRIBUTED",
+                    "discovery_stage": DiscoveryStage.PUBLIC_WEB.value,
+                    "verification_status": "PENDING",
+                },
+            })
+            stored += 1
+        if stored:
+            self.log.info("company_emails_recorded", count=stored)
+        return stored
+
+    def _persist_contacts(self, company_id, candidates) -> list[dict]:
+        out: list[dict] = []
+        for c in candidates:
+            row = {
+                "company_id": company_id,
+                "name": c.name,
+                "title": c.title,
+                "title_priority": c.title_priority,
+                "email": c.email,
+                "rank_score": c.rank_score,
+                "discovery_stage": c.discovery_stage,
+                "profile_url": c.profile_url,
+                "source_type": c.source_type,
+                "source_priority": c.source_priority,
+                "raw_payload": _json_safe(c.raw),
+            }
+            contact_id = self.repo.upsert_contact(row)
+            out.append(
+                {
+                    "id": contact_id,
+                    "name": c.name,
+                    "title": c.title,
+                    "title_priority": c.title_priority,
+                    "priority": c.priority,
+                    "email": c.email,
+                    "rank_score": c.rank_score,
+                    "discovery_stage": c.discovery_stage,
+                }
+            )
+        return out
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _qualification_dict(fc: FreshCompany, result: QualificationResult) -> dict:
+        return {
+            "company": fc.company.company_name_normalized,
+            "display_name": fc.company.company_name,
+            "domain": fc.company.domain,
+            "status": result.status,
+            "score": result.score,
+            "reasons": result.reasons,
+            "review_flags": result.review_flags,
+            "breakdown": _json_safe(result.breakdown),
+            "source_sites": fc.company.source_sites,
+        }
+
+
+def _size_label(profile) -> str | None:
+    if profile is None or not getattr(profile, "size_known", False):
+        return None
+    lo, hi = profile.employee_size_min, profile.employee_size_max
+    if lo is not None and hi is not None:
+        return f"{lo}-{hi}" if lo != hi else str(lo)
+    if lo is not None:
+        return f"{lo}+"
+    if hi is not None:
+        return f"<{hi}"
+    return None

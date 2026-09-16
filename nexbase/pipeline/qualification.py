@@ -1,22 +1,32 @@
-"""Module 6: Qualification Gate.
+"""Qualification Engine: the gate before any paid enrichment.
 
-Scores each company on direct-employer status, employee size, industry, job
-freshness, multiple openings, growth signals, applicant-count signal and
-persistent hiring. Rejections are always paired with a clear reason. Only
-evidence actually observed is used - nothing is invented.
+Rules (Master Plan, Phase 5):
 
-Three outcomes: ``QUALIFIED``, ``REJECTED``, and ``NEEDS_REVIEW`` for companies
-whose evidence is incomplete (e.g. unknown employee size).
+- **Size**: <11 reject, 11-200 eligible, >200 reject, unknown -> NEEDS_REVIEW.
+  A range that crosses a limit ("1 to 50") is not known to be eligible, so it
+  is reviewed too.
+- **Agency exclusion**: staffing, recruitment, executive search, intermediaries.
+- **Internal TA filter**: a mature in-house TA team rejects, a smaller one is
+  reviewed.
+- **Industry relevance** against the run's selected sector.
+- **Hiring signals** scoring, including the LinkedIn applicant signal (<= 20 is
+  positive, never a rejection).
+
+Every rejection reason is collected, not just the first. A company with any
+review flag is NEEDS_REVIEW rather than rejected on a score its missing evidence
+held down. Only evidence actually observed is used - nothing is invented.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from nexbase.config import Settings, get_settings
-from nexbase.core.enums import QualificationStatus
+from nexbase.core.enums import ClientIndustry, QualificationStatus
+from nexbase.discovery import taxonomy
 from nexbase.logging_setup import get_logger
 from nexbase.pipeline.company_identity import FreshCompany
-from nexbase.pipeline.profile import CompanyProfile, build_profile
+from nexbase.pipeline.profile import OBSERVED, CompanyProfile, build_profile, phrase_pattern
 
 # ---------------------------------------------------------------------------
 # Intermediary detection (brief: exclude staffing, recruitment, exec search)
@@ -32,8 +42,9 @@ AGENCY_NAME_KEYWORDS = (
     "search firm", "staff augmentation", "contingent workforce",
     "employment agency", "personnel services", "manpower", "workforce solutions",
     "placement services", "placement agency", "hr solutions", "peo services",
-    "temp agency", "temporary staffing", "consulting group", "rpo",
+    "temp agency", "temporary staffing", "rpo",
 )
+_AGENCY_NAME_RE = phrase_pattern(AGENCY_NAME_KEYWORDS)
 
 #: Matched against descriptions, but only as *self-description* phrases that a
 #: direct employer would not write about itself.
@@ -51,6 +62,7 @@ AGENCY_SELF_DESCRIPTION = (
     "our staffing team",
     "client company is seeking",
 )
+_AGENCY_SELF_RE = phrase_pattern(AGENCY_SELF_DESCRIPTION)
 
 GROWTH_SIGNAL_KEYWORDS = (
     "newly created", "newly-created", "rapidly growing", "fast growing",
@@ -61,6 +73,7 @@ GROWTH_SIGNAL_KEYWORDS = (
     "ramping up", "doubling", "restructuring", "operational change",
     "process improvement", "transformation", "modernization", "automation rollout",
 )
+_GROWTH_RE = phrase_pattern(GROWTH_SIGNAL_KEYWORDS)
 
 
 @dataclass
@@ -88,38 +101,88 @@ class QualificationResult:
 
 
 def detect_agency(company_name: str | None, descriptions: str) -> tuple[bool, str | None]:
-    """Return ``(is_intermediary, evidence)``."""
-    name = (company_name or "").lower()
-    for keyword in AGENCY_NAME_KEYWORDS:
-        if keyword in name:
-            return True, f"NAME:{keyword}"
-    text = descriptions.lower()
-    for phrase in AGENCY_SELF_DESCRIPTION:
-        if phrase in text:
-            return True, f"SELF_DESCRIPTION:{phrase}"
+    """Return ``(is_intermediary, evidence)``.
+
+    Whole words only: "rpo" is an agency, "Acme Corporation" is not.
+    """
+    match = _AGENCY_NAME_RE.search(company_name or "")
+    if match:
+        return True, f"NAME:{match.group(0).lower()}"
+    match = _AGENCY_SELF_RE.search(descriptions or "")
+    if match:
+        return True, f"SELF_DESCRIPTION:{match.group(0).lower()}"
     return False, None
 
 
 def evaluate_size(
     profile: CompanyProfile, settings: Settings
 ) -> tuple[str, str | None]:
-    """Return ``(verdict, reason)`` where verdict is IN_RANGE/OVERSIZE/UNDERSIZE/UNKNOWN."""
+    """Return ``(verdict, reason)``.
+
+    Verdicts: IN_RANGE, OVERSIZE, UNDERSIZE (both rejections), UNKNOWN, and
+    SPANS_LIMIT for a range only partly inside the band - "1 to 50" may be
+    under 11, "more than 100" may be over 200. Both of those go to review.
+    """
     if not profile.size_known:
-        return "UNKNOWN", None
+        return "UNKNOWN", "EMPLOYEE_SIZE_UNKNOWN"
 
     lo = profile.employee_size_min
     hi = profile.employee_size_max
 
-    # Wholly above the ceiling.
+    # Wholly above the ceiling ("201 to 500", "10,000+").
     if lo is not None and lo > settings.size_filter_max:
         return "OVERSIZE", "EMPLOYEE_SIZE_ABOVE_MAX"
-    # Wholly below the floor.
+    # Wholly below the floor ("1 to 10", "fewer than 10").
     if hi is not None and hi < settings.size_filter_min:
         return "UNDERSIZE", "EMPLOYEE_SIZE_BELOW_MIN"
-    # Open-ended upper bound starting inside the band, e.g. "10,000+".
-    if hi is None and lo is not None and lo > settings.size_filter_max:
-        return "OVERSIZE", "EMPLOYEE_SIZE_ABOVE_MAX"
-    return "IN_RANGE", None
+    if (lo is not None and lo >= settings.size_filter_min
+            and hi is not None and hi <= settings.size_filter_max):
+        return "IN_RANGE", None
+    return "SPANS_LIMIT", "EMPLOYEE_SIZE_SPANS_LIMIT"
+
+
+# ---------------------------------------------------------------------------
+# Industry relevance against the selected sector
+# ---------------------------------------------------------------------------
+#: NAICS publishes these two-digit codes as one sector (31-33, 44-45, 48-49).
+_NAICS_SECTOR_OF = {"32": "31", "33": "31", "45": "44", "49": "48"}
+
+
+@lru_cache(maxsize=None)
+def naics_sectors(client_sector: str) -> frozenset[str]:
+    """NAICS sectors a NexBase sector's industries sit in, from the BLS data."""
+    return frozenset(
+        _NAICS_SECTOR_OF.get(industry.naics3[:2], industry.naics3[:2])
+        for industry in taxonomy.load_industries()
+        if industry.client_industry == client_sector)
+
+
+def evaluate_industry(profile: CompanyProfile, sector: str | None) -> tuple[str, str | None]:
+    """Return ``(verdict, reason)``: RELEVANT, NOT_RELEVANT or REVIEW.
+
+    Only an industry observed about the employer can decide relevance. A
+    source's own industry label in a different NAICS sector rejects; an
+    industry read from job-description keywords is too weak to reject on, so a
+    mismatch there is reviewed.
+    """
+    if not sector:
+        return "REVIEW", "SECTOR_NOT_SELECTED"
+    if profile.industry_state != OBSERVED:
+        return "REVIEW", "INDUSTRY_UNKNOWN"
+    industry = profile.client_industry
+    if industry is None:
+        return "REVIEW", "INDUSTRY_UNCLASSIFIED"
+    if industry == sector:
+        return "RELEVANT", None
+    if naics_sectors(industry) & naics_sectors(sector):
+        # Manufacturing is all of NAICS 31-33, so a plastics or food
+        # manufacturer is a manufacturer. The reverse is not true.
+        if sector == ClientIndustry.MANUFACTURING.value:
+            return "RELEVANT", None
+        return "REVIEW", "INDUSTRY_ADJACENT_SECTOR"
+    if profile.industry_source == "JOB_DESCRIPTION":
+        return "REVIEW", "INDUSTRY_MISMATCH_UNCONFIRMED"
+    return "NOT_RELEVANT", "INDUSTRY_NOT_RELEVANT"
 
 
 def freshness_bonus(fresh: FreshCompany) -> float:
@@ -148,8 +211,8 @@ def intensity_bonus(fresh: FreshCompany) -> float:
 
 
 def growth_bonus(fresh: FreshCompany) -> tuple[float, list[str]]:
-    text = " ".join((job.description or "") for job, _ in fresh.fresh_jobs).lower()
-    hits = [k for k in GROWTH_SIGNAL_KEYWORDS if k in text]
+    text = " ".join((job.description or "") for job, _ in fresh.fresh_jobs)
+    hits = list(dict.fromkeys(m.group(0).lower() for m in _GROWTH_RE.finditer(text)))
     if len(hits) >= 3:
         return 10.0, hits[:5]
     if len(hits) == 2:
@@ -191,7 +254,7 @@ def score_company(
     profile: CompanyProfile | None = None,
     settings: Settings | None = None,
 ) -> QualificationResult:
-    """Evaluate a single fresh company against the qualification criteria."""
+    """Evaluate a single fresh company against every qualification rule."""
     settings = settings or get_settings()
     profile = profile or build_profile(fresh)
 
@@ -202,19 +265,12 @@ def score_company(
     review_flags: list[str] = []
     breakdown: dict = {}
 
-    # --- Hard rejection 1: intermediary -----------------------------------
+    # --- Agency exclusion -------------------------------------------------
     is_agency, agency_evidence = detect_agency(fresh.company.company_name, descriptions)
     breakdown["is_staffing_agency"] = is_agency
     breakdown["agency_evidence"] = agency_evidence
     if is_agency:
-        return QualificationResult(
-            company_name=name,
-            status=QualificationStatus.REJECTED.value,
-            score=0.0,
-            reasons=["STAFFING_AGENCY"],
-            breakdown=breakdown,
-            profile=profile,
-        )
+        reasons.append("STAFFING_AGENCY")
 
     # --- Employee size ----------------------------------------------------
     size_verdict, size_reason = evaluate_size(profile, settings)
@@ -223,42 +279,32 @@ def score_company(
     breakdown["employee_size_min"] = profile.employee_size_min
     breakdown["employee_size_max"] = profile.employee_size_max
     breakdown["size_source"] = profile.size_source
-
     if size_verdict in ("UNDERSIZE", "OVERSIZE"):
-        return QualificationResult(
-            company_name=name,
-            status=QualificationStatus.REJECTED.value,
-            score=0.0,
-            reasons=[size_reason],
-            breakdown=breakdown,
-            profile=profile,
-        )
+        reasons.append(size_reason)
+    elif size_reason:
+        review_flags.append(size_reason)
 
-    if size_verdict == "UNKNOWN":
-        review_flags.append("EMPLOYEE_SIZE_UNKNOWN")
-
-    # --- Industry ---------------------------------------------------------
+    # --- Industry relevance to the selected sector ------------------------
+    sector = fresh.company.search_industry
+    industry_verdict, industry_reason = evaluate_industry(profile, sector)
+    breakdown["selected_sector"] = sector
     breakdown["industry_known"] = profile.industry_known
     breakdown["client_industry"] = profile.client_industry
     breakdown["industry_source"] = profile.industry_source
     breakdown["industry_state"] = profile.industry_state
-    if not profile.industry_known:
-        review_flags.append("INDUSTRY_UNKNOWN")
+    breakdown["industry_verdict"] = industry_verdict
+    if industry_verdict == "NOT_RELEVANT":
+        reasons.append(industry_reason)
+    elif industry_reason:
+        review_flags.append(industry_reason)
 
     # --- Internal TA filter ----------------------------------------------
     ta = profile.internal_ta
     breakdown["internal_ta_roles"] = ta.ta_role_count
     breakdown["internal_ta_senior_leader"] = ta.has_senior_ta_leader
     if ta.ta_role_count >= settings.internal_ta_reject_threshold or ta.is_mature:
-        return QualificationResult(
-            company_name=name,
-            status=QualificationStatus.REJECTED.value,
-            score=0.0,
-            reasons=["MATURE_INTERNAL_TA"],
-            breakdown=breakdown,
-            profile=profile,
-        )
-    if ta.ta_role_count >= settings.internal_ta_review_threshold:
+        reasons.append("MATURE_INTERNAL_TA")
+    elif ta.ta_role_count >= settings.internal_ta_review_threshold:
         review_flags.append("POSSIBLE_INTERNAL_TA")
 
     # --- Company identity -------------------------------------------------
@@ -266,29 +312,12 @@ def score_company(
     if fresh.company.identity_ambiguous:
         review_flags.append("AMBIGUOUS_COMPANY_IDENTITY")
 
-    # --- Positive scoring -------------------------------------------------
-    score = 0.0
-
-    breakdown["direct_employer"] = 25.0
-    score += 25.0
-
-    if profile.size_known and size_verdict == "IN_RANGE":
-        breakdown["size_bonus"] = 15.0
-        score += 15.0
-    elif profile.size_known:
-        breakdown["size_bonus"] = 0.0
-    else:
-        breakdown["size_bonus"] = 0.0
-
-    # Only a *verified* industry earns points. An OCCUPATION_TAXONOMY_HINT or
-    # DISCOVERY_INTENT hint is something we guessed, not evidence about the
-    # employer, so it scores nothing and leaves INDUSTRY_UNKNOWN standing.
-    if profile.industry_known and profile.client_industry:
-        breakdown["industry_bonus"] = 12.0
-        score += 12.0
-    else:
-        breakdown["industry_bonus"] = 0.0
-
+    # --- Score: rule outcomes plus hiring signals -------------------------
+    breakdown["direct_employer"] = 0.0 if is_agency else 25.0
+    breakdown["size_bonus"] = 15.0 if size_verdict == "IN_RANGE" else 0.0
+    # Only an industry observed to match the sector earns points. A hint
+    # (OCCUPATION_TAXONOMY_HINT, DISCOVERY_INTENT) is not evidence.
+    breakdown["industry_bonus"] = 12.0 if industry_verdict == "RELEVANT" else 0.0
     breakdown["freshness_bonus"] = freshness_bonus(fresh)
     breakdown["intensity_bonus"] = intensity_bonus(fresh)
     growth, growth_hits = growth_bonus(fresh)
@@ -299,26 +328,23 @@ def score_company(
     breakdown["applicant_signal"] = applicant_note
     breakdown["persistence_bonus"] = persistence_bonus(profile)
     breakdown["persistent_hiring_runs"] = profile.persistent_hiring_runs
-
-    score += (
-        breakdown["freshness_bonus"]
-        + breakdown["intensity_bonus"]
-        + growth
-        + applicants
-        + breakdown["persistence_bonus"]
-    )
-
     breakdown["freshest_job_age_days"] = fresh.min_age_days
+
+    score = sum(breakdown[k] for k in (
+        "direct_employer", "size_bonus", "industry_bonus", "freshness_bonus",
+        "intensity_bonus", "growth_bonus", "applicant_bonus", "persistence_bonus"))
     breakdown["total"] = round(score, 2)
 
     # --- Verdict ----------------------------------------------------------
-    # An ambiguous identity splits a company's postings, so its score is not
-    # trustworthy either way: review it rather than reject it.
-    if score < settings.qualify_threshold and not fresh.company.identity_ambiguous:
-        reasons.append("LOW_SCORE")
+    # A rule failure rejects. Missing or ambiguous evidence is reviewed, never
+    # rejected on a score that the missing evidence held down.
+    if reasons:
         status = QualificationStatus.REJECTED
     elif review_flags:
         status = QualificationStatus.NEEDS_REVIEW
+    elif score < settings.qualify_threshold:
+        reasons.append("LOW_SCORE")
+        status = QualificationStatus.REJECTED
     else:
         status = QualificationStatus.QUALIFIED
 

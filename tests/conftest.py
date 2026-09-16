@@ -52,6 +52,7 @@ def make_job(now):
         applicant_count=None,
         external_id=None,
         emails=None,
+        sector="Manufacturing",
     ) -> RawJob:
         return RawJob(
             source_type=source_type,
@@ -71,6 +72,8 @@ def make_job(now):
             company_employee_count=employees,
             applicant_count=applicant_count,
             observed_emails=list(emails or []),
+            # The run's selected sector, as the source registry stamps it.
+            search_industry=sector,
         )
 
     return _make

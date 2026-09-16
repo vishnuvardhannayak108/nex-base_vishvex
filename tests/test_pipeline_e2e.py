@@ -109,6 +109,12 @@ def test_acceptance_1_raw_to_qualified_to_rejected_with_reasons(runner, universe
 
     rejected = {r.company_name: r for r in report.rejected}
     assert rejected["bolt staffing group"].reasons == ["STAFFING_AGENCY"]
+
+    rows = {(r["reason"], r["outcome"]) for r in runner.repo.calls["rejection"]
+            if r["stage"] == "QUALIFICATION"}
+    assert ("STAFFING_AGENCY", "REJECTED") in rows
+    # Bolt publishes no industry: a review reason is recorded next to the rejection.
+    assert ("INDUSTRY_UNKNOWN", "NEEDS_REVIEW") in rows
     assert "EMPLOYEE_SIZE_BELOW_MIN" in rejected["tiny shop"].reasons
     assert "EMPLOYEE_SIZE_ABOVE_MAX" in rejected["mega industrial"].reasons
 

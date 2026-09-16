@@ -462,6 +462,14 @@ class PipelineRunner:
         if result is None:
             return
 
+        # Every reason behind a REJECTED or NEEDS_REVIEW verdict is its own row.
+        for reason in result.reasons + result.review_flags:
+            self.repo.insert_qualification_reason({
+                "company_id": company_id, "stage": "QUALIFICATION", "reason": reason,
+                "outcome": ("REJECTED" if reason in result.reasons
+                            else QualificationStatus.NEEDS_REVIEW.value),
+            })
+
         if result.status == QualificationStatus.REJECTED.value:
             report.rejected.append(
                 RejectedLead(
@@ -476,9 +484,6 @@ class PipelineRunner:
                     stage="QUALIFICATION",
                     company=aggregate.company_name_normalized,
                     reason=reason,
-                )
-                self.repo.insert_qualification_reason(
-                    {"company_id": company_id, "stage": "QUALIFICATION", "reason": reason}
                 )
             return
 

@@ -942,19 +942,23 @@ def test_contact_discovery_has_a_subdomain_and_directory_stage(settings):
     assert settings.contacts_search_directories is True
 
 
-def test_an_unlisted_industry_is_not_rejected_for_being_unlisted(
+def test_industry_is_judged_against_the_selected_sector_not_a_global_list(
     make_job, settings, now
 ):
-    """A retailer is outside the ten, but that alone must not reject it."""
-    fresh = _fresh(
-        [make_job(company="Buckeye Retail Group", title="Store Manager",
-                  industry="Retail", employees="51 to 200",
-                  description="Rapidly growing, expanding, new location.")],
-        settings, now,
-    )[0]
-    result = score_company(fresh, build_profile(fresh), settings)
-    assert "INDUSTRY_NOT_TARGETED" not in result.reasons
-    assert "INDUSTRY_NOT_RELEVANT" not in result.reasons
+    """A retailer qualifies in a Retail run and is irrelevant to a Manufacturing run."""
+    def result_for(sector):
+        fresh = _fresh(
+            [make_job(company="Buckeye Retail Group", title="Store Manager",
+                      industry="Retail", employees="51 to 200", sector=sector,
+                      description="Rapidly growing, expanding, new location.")],
+            settings, now,
+        )[0]
+        return score_company(fresh, build_profile(fresh), settings)
+
+    assert result_for("Retail").status == QualificationStatus.QUALIFIED.value
+    manufacturing = result_for("Manufacturing")
+    assert manufacturing.status == QualificationStatus.REJECTED.value
+    assert manufacturing.reasons == ["INDUSTRY_NOT_RELEVANT"]
 
 
 def test_manufacturing_subtypes_still_qualify(make_job, settings, now):

@@ -8,6 +8,46 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 5 — Qualification engine (2026-09-16)
+
+Tests: 727 before, **756 passed** after (0 failed). New rule tests in
+`tests/test_qualification.py`; `tests/conftest.py` `make_job` now stamps a selected
+sector (`sector="Manufacturing"`), as the source registry does for every real run.
+
+The existing engine (`qualification.py`, `profile.py`) was kept and corrected
+against the plan's rules; nothing in planner, normalization, dedup, freshness or
+company identity changed.
+
+### Added / changed
+
+- **Industry relevance to the selected sector** (was missing: any observed
+  industry earned the bonus whatever the run's sector). `evaluate_industry`
+  uses `company.search_industry` (the run's sector) and the NAICS sectors of the
+  BLS industry file. Verdicts and reasons are listed in the README.
+- **Size**: a range crossing 11 or 200 is `EMPLOYEE_SIZE_SPANS_LIMIT` review; it
+  was treated as eligible. `EMPLOYEE_SIZE_UNKNOWN` is now produced by
+  `evaluate_size` itself.
+- **Verdict order**: every rejection reason is collected (was: first one only,
+  score 0); a company with review flags is `NEEDS_REVIEW` and never
+  `LOW_SCORE`-rejected (was: unknown size could be rejected on a score that
+  lacked the size and industry bonuses, contradicting "unknown -> Needs Review").
+  This replaces the identity-only exception added in the Phase 4 review.
+- **Whole-word matching** (`profile.phrase_pattern`) for agency names, agency
+  self-descriptions, TA titles and growth wording. Verified bugs: "Acme
+  Corporation" was rejected as an agency (`rpo`), "Seasonal Christmas Associate"
+  counted as a TA role (`hris`).
+- Review flags are persisted as `qualification_reasons` rows with
+  `outcome = NEEDS_REVIEW`; rejection rows now set `outcome = REJECTED`.
+- `breakdown` adds `selected_sector`, `industry_verdict`, `identity_basis`.
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `"consulting group"` agency keyword | `detect_agency` only | none named it | Not staffing, recruitment, executive search or an intermediary; an engineering consulting group is a direct employer |
+| Early `return` on each hard rejection in `score_company` | `score_company` | `test_pipeline_e2e.py` rejection reasons (still pass) | Reported only the first failing rule |
+| `test_an_unlisted_industry_is_not_rejected_for_being_unlisted` (`test_hardening.py`) | — | itself | Asserted relevance with no sector; replaced by `test_industry_is_judged_against_the_selected_sector_not_a_global_list` |
+
 ## Phase 4 review adjustments (2026-09-16)
 
 Tests: 746 before, **727 passed** after (0 failed): 21 employment-type cases removed, 2 identity tests added.

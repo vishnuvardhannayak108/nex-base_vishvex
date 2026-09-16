@@ -19,6 +19,15 @@ from dataclasses import dataclass, field
 from nexbase.discovery import taxonomy
 from nexbase.pipeline.company_identity import FreshCompany
 
+def phrase_pattern(phrases) -> re.Pattern:
+    """Case-insensitive whole-word match for any phrase ("hris" not in "Christmas").
+
+    A trailing plural "s" still matches ("recruiter" finds "Recruiters").
+    """
+    alternatives = "|".join(re.escape(p) for p in sorted(phrases, key=len, reverse=True))
+    return re.compile(rf"\b(?:{alternatives})s?\b", re.IGNORECASE)
+
+
 # ---------------------------------------------------------------------------
 # Employee size parsing
 # ---------------------------------------------------------------------------
@@ -167,6 +176,8 @@ _TA_SENIOR_PATTERNS = (
     "chief people officer",
     "director of recruiting",
 )
+_TA_ROLE_RE = phrase_pattern(_TA_ROLE_PATTERNS)
+_TA_SENIOR_RE = phrase_pattern(_TA_SENIOR_PATTERNS)
 
 
 @dataclass
@@ -194,11 +205,10 @@ def detect_internal_ta(job_titles: list[str | None]) -> InternalTASignal:
     for title in job_titles:
         if not title:
             continue
-        lowered = title.lower()
-        if any(p in lowered for p in _TA_ROLE_PATTERNS):
+        if _TA_ROLE_RE.search(title):
             signal.ta_role_count += 1
             signal.matched_titles.append(title)
-        if any(p in lowered for p in _TA_SENIOR_PATTERNS):
+        if _TA_SENIOR_RE.search(title):
             signal.has_senior_ta_leader = True
     return signal
 

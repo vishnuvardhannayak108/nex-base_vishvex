@@ -54,7 +54,7 @@ Shared infrastructure:
 | 2 | USA-wide planner + source registry | **done** |
 | 3 | Direct sources + ATS + JobSpy cleanup | **done** |
 | 4 | Normalization, dedup, freshness, company identity | **done** |
-| 5 | Qualification engine | pending (existing code runs) |
+| 5 | Qualification engine | **done** |
 | 6 | Free/public contact discovery | pending (existing code runs) |
 | 7 | Enrichment waterfall ZoomInfo -> Apollo -> Apify | pending (not wired) |
 | 8 | POC ranking, email verification, final lead, export | pending |
@@ -173,11 +173,33 @@ rate limited per caller (`NEXBASE_API_RATE_LIMIT`, default 60/min).
 ## Rules in force
 
 - **Size:** <11 rejected, 11-200 eligible, >200 rejected, unknown -> `NEEDS_REVIEW`.
+  A range that crosses a limit ("1 to 50", "more than 100") is `NEEDS_REVIEW`
+  (`EMPLOYEE_SIZE_SPANS_LIMIT`).
 - **Freshness:** postings older than 14 days, undated or future-dated are dropped.
 - **Intermediaries:** staffing, recruiting, executive search and RPO are rejected
-  on the company name or explicit self-description.
-- **Outcomes:** `QUALIFIED` / `NEEDS_REVIEW` / `REJECTED`, always with reasons
-  (`companies.qualification_reasons`, `review_flags`, and `qualification_reasons`).
+  on whole words in the company name or explicit self-description.
+- **Internal TA:** 4+ TA/recruiting openings (or a senior TA leader plus 2) reject
+  (`MATURE_INTERNAL_TA`); 2-3 are reviewed (`POSSIBLE_INTERNAL_TA`).
+- **Industry relevance** is judged against the run's selected sector, never a
+  global list. Only an industry observed about the employer decides it:
+  - same sector -> relevant; a manufacturing subsector in a `Manufacturing` run
+    -> relevant;
+  - same NAICS sector otherwise (e.g. Warehousing vs Logistics) ->
+    `INDUSTRY_ADJACENT_SECTOR` review;
+  - a source's industry label in another NAICS sector -> `INDUSTRY_NOT_RELEVANT`
+    rejection; the same mismatch from job-description keywords ->
+    `INDUSTRY_MISMATCH_UNCONFIRMED` review;
+  - an unclassifiable label -> `INDUSTRY_UNCLASSIFIED`; no observed industry ->
+    `INDUSTRY_UNKNOWN`; no sector -> `SECTOR_NOT_SELECTED` (all review).
+- **Hiring signals** add points: size and relevance (rule outcomes), freshness,
+  number of openings, growth wording, persistent hiring across runs, and LinkedIn
+  applicants (<= 20 adds the most; a high or missing count adds nothing and never
+  rejects).
+- **Outcomes:** any rule failure -> `REJECTED` with every failing reason; else any
+  review flag -> `NEEDS_REVIEW`; else a score below `QUALIFY_THRESHOLD` ->
+  `REJECTED` (`LOW_SCORE`); else `QUALIFIED`. Reasons are stored on the company
+  (`qualification_reasons`, `review_flags`, `qualification_breakdown`) and as one
+  `qualification_reasons` row each with its `outcome`.
 
 ## Observability
 

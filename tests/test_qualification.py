@@ -268,9 +268,9 @@ def test_unverified_industry_earns_no_bonus_and_flags_review(make_job, settings,
 
 
 def test_observed_industry_still_counts(make_job, settings, now):
-    job = make_job(company="Real Brewery", title="Brewer",
-                   employees="51 to 200", industry="Food And Beverages", days_old=1)
-    job.search_industry = "Warehousing & Distribution"
+    job = make_job(company="Real Brewery", title="Brewer", employees="51 to 200",
+                   industry="Food And Beverages", days_old=1,
+                   sector="Food & Beverage Manufacturing")
     fresh = _fresh([job], settings, now)[0]
 
     profile = build_profile(fresh)
@@ -278,3 +278,109 @@ def test_observed_industry_still_counts(make_job, settings, now):
     assert profile.client_industry == "Food & Beverage Manufacturing"
     assert profile.industry_source == "JOB_BOARD"
     assert score_company(fresh, settings=settings).breakdown["industry_bonus"] == 12.0
+
+
+def test_an_observed_industry_from_another_sector_is_rejected_with_its_reason(
+        make_job, settings, now):
+    """The Molson Coors case: a brewery surfaced by a warehousing query."""
+    job = make_job(company="Real Brewery", title="Brewer", employees="51 to 200",
+                   industry="Food And Beverages", sector="Warehousing & Distribution")
+    result = score_company(_fresh([job], settings, now)[0], settings=settings)
+    assert result.status == QualificationStatus.REJECTED.value
+    assert result.reasons == ["INDUSTRY_NOT_RELEVANT"]
+    assert result.breakdown["selected_sector"] == "Warehousing & Distribution"
+    assert result.breakdown["industry_bonus"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 rules
+# ---------------------------------------------------------------------------
+def _known(make_job, settings, now, **overrides):
+    """A company that passes every rule unless ``overrides`` breaks one."""
+    fields = dict(company="Ideal Co", title="Welder", employees="51 to 200",
+                  industry="Manufacturing", days_old=1)
+    fields.update(overrides)
+    return score_company(_fresh([make_job(**fields)], settings, now)[0], settings=settings)
+
+
+@pytest.mark.parametrize("employees,status,code", [
+    ("1 to 10", "REJECTED", "EMPLOYEE_SIZE_BELOW_MIN"),
+    ("fewer than 10", "REJECTED", "EMPLOYEE_SIZE_BELOW_MIN"),
+    ("11 to 50", "QUALIFIED", None),
+    ("200", "QUALIFIED", None),
+    ("201 to 500", "REJECTED", "EMPLOYEE_SIZE_ABOVE_MAX"),
+    ("10,000+", "REJECTED", "EMPLOYEE_SIZE_ABOVE_MAX"),
+    ("1 to 50", "NEEDS_REVIEW", "EMPLOYEE_SIZE_SPANS_LIMIT"),
+    ("more than 100", "NEEDS_REVIEW", "EMPLOYEE_SIZE_SPANS_LIMIT"),
+    (None, "NEEDS_REVIEW", "EMPLOYEE_SIZE_UNKNOWN"),
+])
+def test_size_rule_boundaries(make_job, settings, now, employees, status, code):
+    result = _known(make_job, settings, now, employees=employees)
+    assert result.status == status
+    if code:
+        assert code in result.reasons + result.review_flags
+
+
+def test_unknown_size_is_reviewed_even_when_the_score_is_low(make_job, settings, now):
+    """Unknown size never earns its bonus, so it must not become LOW_SCORE."""
+    result = _known(make_job, settings, now, employees=None, industry=None,
+                    title="Zorb Wrangler", days_old=13)
+    assert result.score < settings.qualify_threshold
+    assert result.status == QualificationStatus.NEEDS_REVIEW.value
+    assert result.reasons == []
+
+
+@pytest.mark.parametrize("sector,industry,status,code", [
+    ("Manufacturing", "Plastics", "QUALIFIED", None),                     # a subsector of manufacturing
+    ("Plastics/Rubber", "Industrial Manufacturing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
+    ("Logistics & Transportation", "Warehousing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
+    ("Construction", "Hospitals and Health Care", "NEEDS_REVIEW", "INDUSTRY_UNCLASSIFIED"),
+    ("Construction", "Hotels", "REJECTED", "INDUSTRY_NOT_RELEVANT"),
+    (None, "Manufacturing", "NEEDS_REVIEW", "SECTOR_NOT_SELECTED"),
+])
+def test_industry_relevance_to_the_selected_sector(make_job, settings, now,
+                                                   sector, industry, status, code):
+    result = _known(make_job, settings, now, sector=sector, industry=industry)
+    assert result.status == status
+    if code:
+        assert code in result.reasons + result.review_flags
+
+
+def test_a_description_keyword_mismatch_is_reviewed_not_rejected(make_job, settings, now):
+    result = _known(make_job, settings, now, sector="Construction", industry=None,
+                    title="Zorb Wrangler", description="Our hotel and resort team.")
+    assert result.breakdown["industry_source"] == "JOB_DESCRIPTION"
+    assert result.status == QualificationStatus.NEEDS_REVIEW.value
+    assert "INDUSTRY_MISMATCH_UNCONFIRMED" in result.review_flags
+
+
+def test_every_rejection_reason_is_reported(make_job, settings, now):
+    result = _known(make_job, settings, now, company="Bolt Staffing Group",
+                    employees="5,000 to 10,000", industry="Hotels")
+    assert result.status == QualificationStatus.REJECTED.value
+    assert result.reasons == ["STAFFING_AGENCY", "EMPLOYEE_SIZE_ABOVE_MAX",
+                              "INDUSTRY_NOT_RELEVANT"]
+
+
+@pytest.mark.parametrize("name", ["Acme Corporation", "Superior Consulting Group",
+                                  "Staffordshire Castings", "Apex Recruitment Drive Parts"])
+def test_agency_words_must_be_whole_words(name):
+    expected = name == "Apex Recruitment Drive Parts"
+    assert detect_agency(name, "")[0] is expected, name
+
+
+def test_ta_roles_must_be_whole_words():
+    assert detect_internal_ta(["Seasonal Christmas Associate"]).ta_role_count == 0
+    assert detect_internal_ta(["Technical Recruiters"]).ta_role_count == 1
+
+
+@pytest.mark.parametrize("count,bonus", [(5, 8.0), (20, 8.0), (45, 3.0), (400, 0.0)])
+def test_linkedin_applicants_only_ever_add_points(make_job, settings, now, count, bonus):
+    result = _known(make_job, settings, now, applicant_count=count)
+    assert result.breakdown["applicant_bonus"] == bonus
+    assert result.status == QualificationStatus.QUALIFIED.value, "never a rejection"
+
+
+def test_growth_words_must_be_whole_words(make_job, settings, now):
+    result = _known(make_job, settings, now, description="Descaling and regrowth of coral.")
+    assert result.breakdown["growth_signals"] == []

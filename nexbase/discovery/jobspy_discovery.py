@@ -1,8 +1,9 @@
-"""Module 2: JobSpy Discovery (public job boards).
+"""JobSpy: the DIRECT handler for Indeed and LinkedIn.
 
-Covers Indeed, LinkedIn, ZipRecruiter, Glassdoor and Google Jobs. Freshness is
-pushed down to the source via ``hours_old`` so stale postings are never even
-transferred.
+Only those two are registered. Verified live on 2026-09-16 for a nationwide and
+a state query; ZipRecruiter (403), Glassdoor (400) and Google Jobs (always empty)
+failed and are no longer run through JobSpy. Freshness is pushed down to the
+source via ``hours_old`` so stale postings are never even transferred.
 
 Two things the previous implementation got wrong and this one does not:
 
@@ -19,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
 from itertools import product
 
 from tenacity import (
@@ -90,17 +90,6 @@ NON_US_SITES = frozenset({"bayt", "naukri", "bdjobs"})
 SUPPORTED_SITES = frozenset(
     {"linkedin", "indeed", "zip_recruiter", "glassdoor", "google", "bayt", "naukri", "bdjobs"}
 )
-
-#: Sites that honour `hours_old` at the source.
-HOURS_OLD_AWARE = frozenset({"linkedin", "indeed", "glassdoor", "google"})
-
-
-@dataclass
-class JobSpyQuery:
-    search_term: str
-    location: str
-    client_industry: str | None = None
-
 
 @retry(
     stop=stop_after_attempt(3),
@@ -226,9 +215,6 @@ class JobSpyDiscovery:
                         df = _scrape_jobs(
                             site_name=[site],
                             search_term=term,
-                            # Google needs its own phrasing or the query degrades to
-                            # "<term> jobs" and returns noise.
-                            google_search_term=f"{term} jobs near {location}",
                             location=location,
                             distance=distance,
                             is_remote=is_remote,

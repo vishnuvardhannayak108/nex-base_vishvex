@@ -2,15 +2,17 @@
 
 Three classes of source, as the Master Plan defines them:
 
-* ``DIRECT`` - job boards. JobSpy handles Indeed, LinkedIn, ZipRecruiter,
-  Glassdoor and Google; NexBase's own board adapters handle the rest.
+* ``DIRECT`` - job boards verified live: JobSpy handles Indeed and LinkedIn;
+  NexBase's board adapters handle SimplyHired, Talent.com and PostJobFree.
 * ``ATS`` - applicant tracking systems, one ats-scrapers slice per portal.
-* ``APIFY`` - Apify actors. The class is supported; none is registered yet.
+* ``APIFY`` - Apify actors for portals that block direct scraping (Glassdoor,
+  ZipRecruiter). Enabled only when ``APIFY_API_TOKEN`` is set.
 
 Every source carries its adapter, enabled/disabled state (``SOURCES_DISABLED``)
 and rate limits (a minimum interval between calls and a per-run call budget).
-Running a plan tracks errors and metrics per source and stamps provenance on
-every job. A portal gets one handler: registering a second one raises.
+Running a plan tracks errors and metrics per source, rejects rows that do not
+meet the Raw Job schema, and stamps provenance on every job. A portal gets one
+handler: registering a second one raises.
 
 Coverage: each title is searched nationwide first. A query that comes back
 capped (by the source or by our own result budget) fans out to every state,
@@ -28,7 +30,8 @@ from typing import Callable
 from nexbase.access.ratelimit import RateLimiter
 from nexbase.config import Settings, get_settings
 from nexbase.core.errors import DiscoveryError
-from nexbase.core.models import RawJob
+from nexbase.core.models import RawJob, raw_job_problems
+from nexbase.discovery.apify_sources import APIFY_ACTORS, run_actor
 from nexbase.discovery.ats_discovery import ATSDiscovery, ATSSliceCache
 from nexbase.discovery.board_scrapers import BOARD_SCRAPERS
 from nexbase.discovery.coverage import (
@@ -53,8 +56,10 @@ class SourceClass(str, Enum):
     APIFY = "APIFY"
 
 
-#: Job boards JobSpy is the handler for.
-JOBSPY_PORTALS = ("indeed", "linkedin", "zip_recruiter", "glassdoor", "google")
+#: Job boards JobSpy is the handler for. ZipRecruiter (403) and Glassdoor (400)
+#: failed live on 2026-09-16 and moved to Apify; Google Jobs returned nothing
+#: and was removed.
+JOBSPY_PORTALS = ("indeed", "linkedin")
 #: ats-scrapers slices registered as ATS sources.
 ATS_PORTALS = (
     "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "bamboohr",
@@ -87,6 +92,8 @@ class Source:
     enabled: bool = True
     min_interval_seconds: float = 0.0
     max_calls_per_run: int = 60
+    #: Why a source is off when it is not the operator's choice.
+    disabled_reason: str | None = None
 
     @property
     def id(self) -> str:
@@ -97,6 +104,7 @@ class Source:
             "id": self.id, "portal": self.portal,
             "source_class": self.source_class.value, "handler": self.handler,
             "enabled": self.enabled,
+            "disabled_reason": self.disabled_reason,
             "min_interval_seconds": self.min_interval_seconds,
             "max_calls_per_run": self.max_calls_per_run,
         }
@@ -110,6 +118,9 @@ class SourceStats:
     jobs_returned: int = 0
     jobs_accepted: int = 0
     duplicates: int = 0
+    #: Rows dropped for not meeting the Raw Job schema, by problem.
+    schema_rejected: int = 0
+    schema_problems: dict[str, int] = field(default_factory=dict)
     errors: int = 0
     last_error: str | None = None
     fanouts: int = 0
@@ -228,6 +239,12 @@ class SourceRegistry:
         fetched_at = datetime.now(timezone.utc).isoformat()
         accepted = 0
         for job in found:
+            problems = raw_job_problems(job, source.portal)
+            if problems:
+                stats.schema_rejected += 1
+                for problem in problems:
+                    stats.schema_problems[problem] = stats.schema_problems.get(problem, 0) + 1
+                continue
             key = job.external_id or job.application_url
             if key and key in seen:
                 outcome.duplicates += 1
@@ -294,6 +311,14 @@ def build_registry(settings: Settings | None = None, access=None, logger=None) -
             portal, SourceClass.DIRECT, "nexbase-board", _board_adapter(scraper, access, log),
             enabled=portal not in disabled, min_interval_seconds=interval,
             max_calls_per_run=budget))
+    for portal, actor in APIFY_ACTORS.items():
+        registry.register(Source(
+            portal, SourceClass.APIFY, f"apify:{actor.actor_id}",
+            _apify_adapter(portal, actor, settings),
+            enabled=bool(settings.apify_api_token) and portal not in disabled,
+            disabled_reason=None if settings.apify_api_token else "APIFY_API_TOKEN not set",
+            min_interval_seconds=interval,
+            max_calls_per_run=settings.apify_max_calls_per_run))
     # A slice is downloaded once per run, however many queries read it.
     slice_cache = ATSSliceCache(log)
     for portal in ATS_PORTALS:
@@ -324,7 +349,7 @@ def _board_adapter(scraper_class, access, log) -> Adapter:
         scraper = scraper_class(access=access, logger=log)
         jobs = scraper.search(
             search_terms=[query.title.title], locations=[query.geo.name],
-            client_industry=query.sector)
+            client_industry=query.sector, hours_old=query.hours_old)
         return jobs, scraper.last_outcomes[-1]
     return search
 
@@ -332,8 +357,11 @@ def _board_adapter(scraper_class, access, log) -> Adapter:
 def _ats_adapter(portal: str, settings, log, slice_cache) -> Adapter:
     def search(query: SourceQuery):
         ats = ATSDiscovery(settings, log, slice_cache=slice_cache)
-        limit = settings.ats_results_per_probe
-        # The dataset has no hours_old; the freshness filter handles age.
+        # The slice is local and already cut to US rows inside the freshness
+        # window, so the only limit is the general per-query budget. Several
+        # slices store only "US" as a location, so state queries cannot reach
+        # those rows - a small nationwide limit would lose them.
+        limit = settings.discovery_max_results_per_query
         jobs = ats.search(
             query=query.title.title,
             location=query.geo.code if query.geo.level == STATE else None,
@@ -345,6 +373,26 @@ def _ats_adapter(portal: str, settings, log, slice_cache) -> Adapter:
             return jobs, outcome
         attach_ats_company_sites(jobs, ats, settings, log)
         outcome.stop_reason = BUDGET_REACHED if len(jobs) >= limit else SOURCE_EXHAUSTED
+        return jobs, outcome
+    return search
+
+
+def _apify_adapter(portal: str, actor, settings) -> Adapter:
+    def search(query: SourceQuery):
+        max_items = settings.apify_max_items_per_query
+        items = run_actor(
+            actor.actor_id,
+            actor.build_input(query.title.title, query.geo, query.hours_old, max_items),
+            token=settings.apify_api_token, max_items=max_items,
+            max_charge_usd=settings.apify_max_charge_usd_per_call,
+            timeout_seconds=settings.apify_timeout_seconds,
+        )
+        jobs = [job for job in (actor.to_raw_job(item, portal) for item in items) if job]
+        for job in jobs:
+            job.search_industry = query.sector or None
+        outcome = SourceOutcome(
+            source=portal, jobs_returned=len(jobs),
+            stop_reason=BUDGET_REACHED if len(items) >= max_items else SOURCE_EXHAUSTED)
         return jobs, outcome
     return search
 

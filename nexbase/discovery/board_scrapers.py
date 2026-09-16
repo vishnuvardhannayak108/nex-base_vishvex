@@ -1,15 +1,14 @@
-"""Module 2b: Monster and SimplyHired discovery.
+"""Direct board adapters JobSpy does not cover: SimplyHired, Talent.com, PostJobFree.
 
-The client brief names eight discovery sources. JobSpy covers LinkedIn,
-Indeed, ZipRecruiter, Glassdoor and Google; ats-scrapers covers company career
-pages. **Neither package supports Monster or SimplyHired** - they are absent
-from JobSpy's `Site` enum and from all 65 sources in the ats-scrapers manifest.
+Structured data first (embedded JSON, schema.org ``JobPosting``), presentation
+markup only as a fallback, so the adapters survive restyles. All fetching goes
+through the Access Layer, so robots, SSRF, rate limits and the Camoufox budget
+apply here too.
 
-These two adapters close that gap. Both boards embed schema.org ``JobPosting``
-JSON-LD on their search results and detail pages, so extraction keys off that
-rather than off presentation markup, which keeps the adapters durable when the
-sites restyle. All fetching goes through the Access Layer, so the Scrapling ->
-Camoufox rules and the fallback budget apply here too.
+Verified live on 2026-09-16: a date-posted URL filter is honoured by SimplyHired
+(``t``) and Talent.com (``date``), so the freshness window is pushed to the
+source. A first page with no job rows is only "no results" when the board says
+so; otherwise it is reported as a parse failure.
 
 Nothing is invented: a posting with no parseable date is emitted with
 ``posted_at=None`` and the freshness filter rejects it, exactly as for any
@@ -184,6 +183,22 @@ class BoardConfig:
     site: str
     base_url: str
     search_template: str
+    #: Appended when the board honours a date-posted filter, e.g. "&t={days}".
+    date_template: str = ""
+    #: Text the board prints when a search genuinely has no results (lower case).
+    no_results_markers: tuple[str, ...] = ()
+
+
+#: Date-posted windows verified live on the boards that filter by date.
+DATE_FILTER_DAYS = (7, 14)
+
+
+def date_filter_days(hours_old: int | None) -> int | None:
+    """The smallest verified filter covering ``hours_old``; None when none does."""
+    if not hours_old:
+        return None
+    days = -(-hours_old // 24)
+    return next((d for d in DATE_FILTER_DAYS if d >= days), None)
 
 
 class BoardScraper(ABC):
@@ -303,10 +318,15 @@ class BoardScraper(ABC):
         )
         return body.get_text(" ", strip=True)[:20000] if body else None
 
-    def search_url(self, term: str, location: str, page: int = 1) -> str:
-        return self.config.search_template.format(
+    def search_url(self, term: str, location: str, page: int = 1,
+                   hours_old: int | None = None) -> str:
+        url = self.config.search_template.format(
             term=quote_plus(term), location=quote_plus(location), page=page
         )
+        days = date_filter_days(hours_old)
+        if self.config.date_template and days:
+            url += self.config.date_template.format(days=days)
+        return url
 
     def search(
         self,
@@ -315,6 +335,7 @@ class BoardScraper(ABC):
         pages: int | None = None,
         max_results: int | None = None,
         client_industry: str | None = None,
+        hours_old: int | None = None,
     ) -> list[RawJob]:
         """Walk every result page the board will serve for each query.
 
@@ -345,7 +366,7 @@ class BoardScraper(ABC):
                     if accepted_here >= result_budget:
                         outcome.stop_reason = BUDGET_REACHED
                         break
-                    url = self.search_url(term, location, page)
+                    url = self.search_url(term, location, page, hours_old)
                     self.log.info(
                         "board_search_start",
                         site=self.config.site,
@@ -380,6 +401,15 @@ class BoardScraper(ABC):
                         break
 
                     found = self.parse(fetched.html, url, client_industry=client_industry)
+                    if not found and page == 1 and not self._says_no_results(fetched.html):
+                        # A layout change looks exactly like an empty search
+                        # unless the board's own "no results" text is checked.
+                        outcome.stop_reason = ERROR
+                        outcome.error_type = "PARSE_FAILED"
+                        outcome.error_message = (
+                            "no job rows parsed and no 'no results' message on page 1")
+                        self.log.warning("board_parse_failed", site=self.config.site, url=url)
+                        break
                     self._enrich_from_detail_pages(found)
                     new = 0
                     for job in found:
@@ -417,6 +447,10 @@ class BoardScraper(ABC):
 
         self.log.info("board_total", site=self.config.site, count=len(records))
         return records
+
+    def _says_no_results(self, html: str | None) -> bool:
+        text = (html or "").lower()
+        return any(marker in text for marker in self.config.no_results_markers)
 
     # ------------------------------------------------------------------
     def parse(
@@ -483,59 +517,13 @@ class BoardScraper(ABC):
         """Presentation-markup fallback when a page carries no JSON-LD."""
 
 
-class MonsterDiscovery(BoardScraper):
-    """Monster.com search results.
-
-    NON-FUNCTIONAL as of 2026-09-14 and disabled by default (``SOURCES_DISABLED``).
-    Live check: the page fetches fine (HTTP 200, ~174 KB, correct search title,
-    results header present) but contains zero job rows - no JobPosting JSON-LD,
-    no ``__NEXT_DATA__`` job array, and no card markup. Waiting for network idle
-    plus a 3 s settle does not change this, so Monster is serving an empty shell
-    rather than blocking us outright. Re-enable only once a path to the actual
-    listings is found; a CSS-selector guess will not fix it.
-    """
-
-    config = BoardConfig(
-        site="monster",
-        base_url="https://www.monster.com",
-        search_template=(
-            "https://www.monster.com/jobs/search"
-            "?q={term}&where={location}&page={page}&so=m.h.s"
-        ),
-    )
-
-    def parse_fallback(self, soup, page_url, client_industry):
-        jobs: list[RawJob] = []
-        for card in soup.select("[data-testid='JobCard'], article[data-test-id='svx-job-card']"):
-            link = card.find("a", href=True)
-            title_el = card.select_one("[data-testid='jobTitle'], h3, h2")
-            company_el = card.select_one("[data-testid='company'], [data-test-id='svx-job-card-company']")
-            location_el = card.select_one("[data-testid='jobDetailLocation'], [data-test-id='svx-job-card-location']")
-            age_el = card.select_one("[data-testid='jobDetailDateRecency'], time")
-            if not (title_el and company_el):
-                continue
-            url = urljoin(self.config.base_url, link["href"]) if link else page_url
-            jobs.append(
-                RawJob(
-                    source_type=self.source.source_type.value,
-                    source_priority=int(self.source.source_priority.value),
-                    source_site=self.config.site,
-                    external_id=url,
-                    title=title_el.get_text(strip=True),
-                    company_name=company_el.get_text(strip=True),
-                    location=location_el.get_text(strip=True) if location_el else None,
-                    posted_at=parse_relative_age(age_el.get_text(strip=True) if age_el else None),
-                    application_url=url,
-                    apply_url=url,
-                    search_industry=client_industry,
-                    raw={"extraction": "monster-card"},
-                )
-            )
-        return jobs
-
-
 class SimplyHiredDiscovery(BoardScraper):
-    """SimplyHired.com search results."""
+    """SimplyHired.com search results.
+
+    The results page embeds every job in ``__NEXT_DATA__`` with an exact
+    ``dateOnIndeed`` timestamp and its job types. Only some cards show a visible
+    "6d" stamp, so reading cards alone left 11 of 20 live jobs undated.
+    """
 
     config = BoardConfig(
         site="simplyhired",
@@ -543,7 +531,53 @@ class SimplyHiredDiscovery(BoardScraper):
         search_template=(
             "https://www.simplyhired.com/search?q={term}&l={location}&pn={page}"
         ),
+        date_template="&t={days}",
+        no_results_markers=("did not find any",),
     )
+
+    def parse(self, html, page_url, client_industry=None):
+        jobs = self._from_next_data(html, client_industry)
+        if jobs is not None:
+            return jobs
+        return super().parse(html, page_url, client_industry)
+
+    def _from_next_data(self, html, client_industry) -> list[RawJob] | None:
+        soup = BeautifulSoup(html or "", "html.parser")
+        script = soup.find("script", id="__NEXT_DATA__")
+        try:
+            listed = json.loads(script.string)["props"]["pageProps"]["jobs"]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+        jobs: list[RawJob] = []
+        for item in listed or []:
+            if not isinstance(item, dict) or not item.get("title"):
+                continue
+            url = urljoin(self.config.base_url, item.get("botUrl") or "") if item.get("botUrl") else None
+            posted = None
+            if item.get("dateOnIndeed"):
+                try:
+                    posted = datetime.fromtimestamp(int(item["dateOnIndeed"]) / 1000, timezone.utc)
+                except (TypeError, ValueError, OverflowError):
+                    posted = None
+            job_types = item.get("jobTypes") or []
+            jobs.append(RawJob(
+                source_type=self.source.source_type.value,
+                source_priority=int(self.source.source_priority.value),
+                source_site=self.config.site,
+                external_id=url or item.get("jobKey"),
+                title=item.get("title"),
+                company_name=item.get("company") or None,
+                location=item.get("location") or None,
+                posted_at=posted,
+                employment_type=", ".join(map(str, job_types)) if isinstance(job_types, list) and job_types else None,
+                application_url=url,
+                apply_url=url,
+                search_industry=client_industry,
+                raw={"extraction": "simplyhired-next-data", "job_key": item.get("jobKey"),
+                     "snippet": item.get("snippet"), "salary": item.get("salaryInfo"),
+                     "date_source": "dateOnIndeed"},
+            ))
+        return jobs
 
     def parse_fallback(self, soup, page_url, client_industry):
         jobs: list[RawJob] = []
@@ -595,6 +629,8 @@ class TalentComDiscovery(BoardScraper):
         search_template=(
             "https://www.talent.com/jobs?k={term}&l={location}&p={page}"
         ),
+        date_template="&date={days}",
+        no_results_markers=("no results for",),
     )
 
     def parse_fallback(self, soup, page_url, client_industry):
@@ -653,6 +689,7 @@ class PostJobFreeDiscovery(BoardScraper):
         site="postjobfree",
         base_url="https://www.postjobfree.com",
         search_template="https://www.postjobfree.com/jobs?q={term}&l={location}&p={page}",
+        no_results_markers=("did not match any jobs",),
     )
 
     def parse_fallback(self, soup, page_url, client_industry):
@@ -690,11 +727,9 @@ class PostJobFreeDiscovery(BoardScraper):
             )
         return jobs
 
-#: Every board adapter NexBase implements, by portal. Whether one runs is the
-#: source registry's decision (``SOURCES_DISABLED``); Monster is off by default.
+#: Every board adapter NexBase implements, by portal.
 BOARD_SCRAPERS = {
     "simplyhired": SimplyHiredDiscovery,
     "talent_com": TalentComDiscovery,
     "postjobfree": PostJobFreeDiscovery,
-    "monster": MonsterDiscovery,
 }

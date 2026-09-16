@@ -123,6 +123,27 @@ class RawJob:
         )
 
 
+#: The standard Raw Job schema every source must meet. Company is not listed: a
+#: posting without one is discarded by normalization, which records why.
+REQUIRED_RAW_JOB_FIELDS = ("source_type", "source_site", "title", "application_url")
+RAW_JOB_SOURCE_TYPES = frozenset({"JOB_BOARD", "ATS"})
+
+
+def raw_job_problems(job, portal: str) -> list[str]:
+    """Why ``job`` does not meet the Raw Job schema for ``portal``; [] when it does."""
+    if not isinstance(job, RawJob):
+        return ["NOT_A_RAW_JOB"]
+    problems = [f"MISSING_{name.upper()}" for name in REQUIRED_RAW_JOB_FIELDS
+                if not getattr(job, name)]
+    if job.source_type and job.source_type not in RAW_JOB_SOURCE_TYPES:
+        problems.append("UNKNOWN_SOURCE_TYPE")
+    if job.source_site and job.source_site != portal:
+        problems.append("SOURCE_SITE_MISMATCH")
+    if job.posted_at is not None and not isinstance(job.posted_at, datetime):
+        problems.append("POSTED_AT_NOT_DATETIME")
+    return problems
+
+
 #: Literal addresses only. Nothing here ever constructs or guesses one.
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 

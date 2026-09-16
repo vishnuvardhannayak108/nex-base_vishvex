@@ -1,0 +1,1507 @@
+{
+  "generated_on": "2026-09-16",
+  "purpose": "Phase 3 evidence: which sources are reliable, what was fixed, what moved to Apify.",
+  "method": "One 'Warehouse Manager' query per portal, nationwide (USA) and Ohio, 14-day window. Page budget 2, JobSpy results 20. ATS slices additionally queried for 'Manager'.",
+  "decisions": {
+    "kept_direct": [
+      "indeed (jobspy)",
+      "linkedin (jobspy)",
+      "simplyhired",
+      "talent_com",
+      "postjobfree"
+    ],
+    "moved_to_apify": {
+      "zip_recruiter": "JobSpy 403 (Cloudflare) nationwide and Ohio -> silentflow~ziprecruiter-scraper-ppe",
+      "glassdoor": "JobSpy 400 'location not parsed' nationwide and Ohio -> agentx~glassdoor-jobs-scraper"
+    },
+    "removed": {
+      "google": "JobSpy returned nothing nationwide and Ohio; no Apify actor documents a title and posting date; re-lists covered boards",
+      "monster": "fetches but serves no job rows (2026-09-14); not in the Master Plan's reliable list"
+    },
+    "ats_kept": [
+      "ashby",
+      "bamboohr",
+      "breezy",
+      "greenhouse",
+      "jazzhr",
+      "lever",
+      "paylocity",
+      "recruitee",
+      "smartrecruiters",
+      "workable"
+    ]
+  },
+  "direct_before_fixes": {
+    "indeed": {
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      }
+    },
+    "linkedin": {
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=3"
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      }
+    },
+    "zip_recruiter": {
+      "US": {
+        "jobs": 0,
+        "stop_reason": "BLOCKED",
+        "note": "403 forbidden (Cloudflare)"
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "BLOCKED",
+        "note": "403 forbidden (Cloudflare)"
+      }
+    },
+    "glassdoor": {
+      "US": {
+        "jobs": 0,
+        "stop_reason": "ERROR",
+        "note": "400 location not parsed"
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "ERROR",
+        "note": "400 location not parsed"
+      }
+    },
+    "google": {
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "note": "empty"
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "note": "empty"
+      }
+    },
+    "simplyhired": {
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=11"
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=6"
+      }
+    },
+    "talent_com": {
+      "US": {
+        "jobs": 17,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      }
+    },
+    "postjobfree": {
+      "US": {
+        "jobs": 10,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      },
+      "OH": {
+        "jobs": 10,
+        "stop_reason": "BUDGET_REACHED",
+        "note": "posted_at_missing=0"
+      }
+    }
+  },
+  "fixes": {
+    "simplyhired": "Parse __NEXT_DATA__ jobs (exact dateOnIndeed, jobTypes) instead of cards; date filter &t=14 verified (593 -> 198 results, newest 20 all <= 12 days).",
+    "talent_com": "Date filter &date=14 verified (17 results, all <= 13 days).",
+    "postjobfree": "No date filter and results not date-sorted; freshness filter handles age.",
+    "all_boards": "Empty page 1 without the board's own no-results text is PARSE_FAILED, not exhausted. Markers: simplyhired 'did not find any', talent_com 'no results for', postjobfree 'did not match any jobs'.",
+    "ats": "Manifest sha256/size_bytes describe the CSV (paylocity 5.6 MB CSV vs 0.7 MB parquet); slices cached on disk per version, verified by row count, read with only mapped columns, US rows and the freshness window. greenhouse 180,612 rows -> 6,540 kept, 86 MB in memory."
+  },
+  "direct_after_fixes": {
+    "direct:indeed": {
+      "source_class": "DIRECT",
+      "handler": "jobspy",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 6.3,
+        "dated": 20,
+        "fresh_14d": 19,
+        "with_company": 19,
+        "with_employment_type": 7,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 2.4,
+        "dated": 20,
+        "fresh_14d": 20,
+        "with_company": 20,
+        "with_employment_type": 13,
+        "in_ohio": 20,
+        "schema_problems": {}
+      }
+    },
+    "direct:linkedin": {
+      "source_class": "DIRECT",
+      "handler": "jobspy",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 32.1,
+        "dated": 17,
+        "fresh_14d": 17,
+        "with_company": 20,
+        "with_employment_type": 20,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 34.1,
+        "dated": 20,
+        "fresh_14d": 19,
+        "with_company": 20,
+        "with_employment_type": 20,
+        "in_ohio": 20,
+        "schema_problems": {}
+      }
+    },
+    "direct:simplyhired": {
+      "source_class": "DIRECT",
+      "handler": "nexbase-board",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 25,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 11.0,
+        "dated": 25,
+        "fresh_14d": 25,
+        "with_company": 25,
+        "with_employment_type": 19,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 11.0,
+        "dated": 20,
+        "fresh_14d": 20,
+        "with_company": 20,
+        "with_employment_type": 18,
+        "in_ohio": 20,
+        "schema_problems": {}
+      }
+    },
+    "direct:talent_com": {
+      "source_class": "DIRECT",
+      "handler": "nexbase-board",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 40,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 16.9,
+        "dated": 40,
+        "fresh_14d": 40,
+        "with_company": 40,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 17,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 8.8,
+        "dated": 17,
+        "fresh_14d": 17,
+        "with_company": 17,
+        "with_employment_type": 0,
+        "in_ohio": 17,
+        "schema_problems": {}
+      }
+    },
+    "direct:postjobfree": {
+      "source_class": "DIRECT",
+      "handler": "nexbase-board",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 16.4,
+        "dated": 20,
+        "fresh_14d": 17,
+        "with_company": 20,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 20,
+        "stop_reason": "BUDGET_REACHED",
+        "error": "",
+        "seconds": 16.1,
+        "dated": 20,
+        "fresh_14d": 20,
+        "with_company": 20,
+        "with_employment_type": 0,
+        "in_ohio": 20,
+        "schema_problems": {}
+      }
+    },
+    "apify:glassdoor": {
+      "source_class": "APIFY",
+      "handler": "apify:agentx~glassdoor-jobs-scraper",
+      "enabled": false,
+      "disabled_reason": "APIFY_API_TOKEN not set"
+    },
+    "apify:zip_recruiter": {
+      "source_class": "APIFY",
+      "handler": "apify:silentflow~ziprecruiter-scraper-ppe",
+      "enabled": false,
+      "disabled_reason": "APIFY_API_TOKEN not set"
+    }
+  },
+  "ats_per_slice": {
+    "paylocity": {
+      "slice": "paylocity",
+      "download_seconds": 0.8,
+      "parquet_mb": 0.7,
+      "rows_total": 1258,
+      "read_seconds": 0.1,
+      "rows_us_fresh_or_undated": 448,
+      "mem_mb": 3.8,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.8,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 29,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 3.0,
+        "filled": {
+          "title": 29,
+          "company_name": 29,
+          "application_url": 29,
+          "external_id": 29,
+          "posted_at": 29,
+          "location": 29,
+          "employment_type": 0,
+          "description": 29,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "NY",
+            6
+          ],
+          [
+            "NC",
+            5
+          ],
+          [
+            "GA",
+            4
+          ],
+          [
+            "?",
+            4
+          ]
+        ],
+        "source_sites": [
+          "paylocity"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.3,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "workable": {
+      "slice": "workable",
+      "download_seconds": 2.5,
+      "parquet_mb": 7.8,
+      "rows_total": 28114,
+      "read_seconds": 0.3,
+      "rows_us_fresh_or_undated": 1407,
+      "mem_mb": 4.7,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 1.1,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 5.1,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 75,
+          "description": 17,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "TX",
+            15
+          ],
+          [
+            "NY",
+            8
+          ],
+          [
+            "CA",
+            7
+          ],
+          [
+            "?",
+            7
+          ]
+        ],
+        "source_sites": [
+          "workable"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 7,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 2.2,
+        "filled": {
+          "title": 7,
+          "company_name": 7,
+          "application_url": 7,
+          "external_id": 7,
+          "posted_at": 7,
+          "location": 7,
+          "employment_type": 5,
+          "description": 1,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "OH",
+            6
+          ],
+          [
+            "MI",
+            1
+          ]
+        ],
+        "source_sites": [
+          "workable"
+        ]
+      }
+    },
+    "recruitee": {
+      "slice": "recruitee",
+      "download_seconds": 4.6,
+      "parquet_mb": 11.9,
+      "rows_total": 16408,
+      "read_seconds": 0.3,
+      "rows_us_fresh_or_undated": 149,
+      "mem_mb": 1.2,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.9,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 23,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 3.2,
+        "filled": {
+          "title": 23,
+          "company_name": 23,
+          "application_url": 23,
+          "external_id": 23,
+          "posted_at": 23,
+          "location": 23,
+          "employment_type": 23,
+          "description": 23,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "IL",
+            7
+          ],
+          [
+            "TX",
+            7
+          ],
+          [
+            "NC",
+            2
+          ],
+          [
+            "NY",
+            2
+          ]
+        ],
+        "source_sites": [
+          "recruitee"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "bamboohr": {
+      "slice": "bamboohr",
+      "download_seconds": 5.0,
+      "parquet_mb": 16.8,
+      "rows_total": 19330,
+      "read_seconds": 0.3,
+      "rows_us_fresh_or_undated": 934,
+      "mem_mb": 8.3,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 1,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 2.6,
+        "filled": {
+          "title": 1,
+          "company_name": 1,
+          "application_url": 1,
+          "external_id": 1,
+          "posted_at": 1,
+          "location": 1,
+          "employment_type": 1,
+          "description": 1,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "FL",
+            1
+          ]
+        ],
+        "source_sites": [
+          "bamboohr"
+        ]
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 7.2,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 92,
+          "description": 100,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "TX",
+            12
+          ],
+          [
+            "OR",
+            8
+          ],
+          [
+            "CA",
+            8
+          ],
+          [
+            "SC",
+            7
+          ]
+        ],
+        "source_sites": [
+          "bamboohr"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "breezy": {
+      "slice": "breezy",
+      "download_seconds": 4.1,
+      "parquet_mb": 12.7,
+      "rows_total": 29262,
+      "read_seconds": 0.3,
+      "rows_us_fresh_or_undated": 200,
+      "mem_mb": 1.8,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 1.1,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 36,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 5.0,
+        "filled": {
+          "title": 36,
+          "company_name": 36,
+          "application_url": 36,
+          "external_id": 36,
+          "posted_at": 36,
+          "location": 36,
+          "employment_type": 35,
+          "description": 36,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "?",
+            36
+          ]
+        ],
+        "source_sites": [
+          "breezy"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "jazzhr": {
+      "slice": "jazzhr",
+      "download_seconds": 8.5,
+      "parquet_mb": 29.7,
+      "rows_total": 69198,
+      "read_seconds": 0.7,
+      "rows_us_fresh_or_undated": 383,
+      "mem_mb": 1.4,
+      "undated_share": 0.909,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 1.8,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 21,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 3.5,
+        "filled": {
+          "title": 21,
+          "company_name": 21,
+          "application_url": 21,
+          "external_id": 21,
+          "posted_at": 10,
+          "location": 21,
+          "employment_type": 10,
+          "description": 21,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "?",
+            21
+          ]
+        ],
+        "source_sites": [
+          "jazzhr"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "ashby": {
+      "slice": "ashby",
+      "download_seconds": 16.4,
+      "parquet_mb": 54.6,
+      "rows_total": 55098,
+      "read_seconds": 0.7,
+      "rows_us_fresh_or_undated": 769,
+      "mem_mb": 11.5,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 1.5,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 10.1,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 100,
+          "description": 100,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "?",
+            96
+          ],
+          [
+            "NY",
+            1
+          ],
+          [
+            "TX",
+            1
+          ],
+          [
+            "CA",
+            1
+          ]
+        ],
+        "source_sites": [
+          "ashby"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "lever": {
+      "slice": "lever",
+      "download_seconds": 14.0,
+      "parquet_mb": 42.2,
+      "rows_total": 71709,
+      "read_seconds": 0.7,
+      "rows_us_fresh_or_undated": 1208,
+      "mem_mb": 13.7,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 1.8,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 5.7,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 97,
+          "description": 100,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "?",
+            97
+          ],
+          [
+            "NY",
+            2
+          ],
+          [
+            "FL",
+            1
+          ]
+        ],
+        "source_sites": [
+          "lever"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 0,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 0.4,
+        "filled": {
+          "title": 0,
+          "company_name": 0,
+          "application_url": 0,
+          "external_id": 0,
+          "posted_at": 0,
+          "location": 0,
+          "employment_type": 0,
+          "description": 0,
+          "company_website": 0
+        },
+        "states": [],
+        "source_sites": []
+      }
+    },
+    "greenhouse": {
+      "slice": "greenhouse",
+      "download_seconds": 33.8,
+      "parquet_mb": 129.0,
+      "rows_total": 180612,
+      "read_seconds": 2.1,
+      "rows_us_fresh_or_undated": 6540,
+      "mem_mb": 85.6,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 1,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 4.5,
+        "filled": {
+          "title": 1,
+          "company_name": 1,
+          "application_url": 1,
+          "external_id": 1,
+          "posted_at": 1,
+          "location": 1,
+          "employment_type": 0,
+          "description": 1,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "TX",
+            1
+          ]
+        ],
+        "source_sites": [
+          "greenhouse"
+        ]
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 5.1,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 0,
+          "description": 100,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "?",
+            35
+          ],
+          [
+            "CA",
+            20
+          ],
+          [
+            "NY",
+            5
+          ],
+          [
+            "VA",
+            5
+          ]
+        ],
+        "source_sites": [
+          "greenhouse"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 18,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 3.0,
+        "filled": {
+          "title": 18,
+          "company_name": 18,
+          "application_url": 18,
+          "external_id": 18,
+          "posted_at": 18,
+          "location": 18,
+          "employment_type": 0,
+          "description": 18,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "OH",
+            17
+          ],
+          [
+            "?",
+            1
+          ]
+        ],
+        "source_sites": [
+          "greenhouse"
+        ]
+      }
+    },
+    "smartrecruiters": {
+      "slice": "smartrecruiters",
+      "download_seconds": 44.3,
+      "parquet_mb": 122.0,
+      "rows_total": 245178,
+      "read_seconds": 2.2,
+      "rows_us_fresh_or_undated": 74873,
+      "mem_mb": 671.7,
+      "undated_share": 0.0,
+      "warehouse_usa": {
+        "jobs": 12,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 9.2,
+        "filled": {
+          "title": 12,
+          "company_name": 12,
+          "application_url": 12,
+          "external_id": 12,
+          "posted_at": 12,
+          "location": 12,
+          "employment_type": 12,
+          "description": 12,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "CA",
+            2
+          ],
+          [
+            "NY",
+            2
+          ],
+          [
+            "CO",
+            2
+          ],
+          [
+            "TN",
+            1
+          ]
+        ],
+        "source_sites": [
+          "smartrecruiters"
+        ]
+      },
+      "manager_usa": {
+        "jobs": 100,
+        "stop": "BUDGET_REACHED",
+        "error": "",
+        "secs": 4.2,
+        "filled": {
+          "title": 100,
+          "company_name": 100,
+          "application_url": 100,
+          "external_id": 100,
+          "posted_at": 100,
+          "location": 100,
+          "employment_type": 100,
+          "description": 100,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "IL",
+            48
+          ],
+          [
+            "CA",
+            13
+          ],
+          [
+            "NJ",
+            8
+          ],
+          [
+            "TX",
+            6
+          ]
+        ],
+        "source_sites": [
+          "smartrecruiters"
+        ]
+      },
+      "manager_oh": {
+        "jobs": 95,
+        "stop": "SOURCE_EXHAUSTED",
+        "error": "",
+        "secs": 7.8,
+        "filled": {
+          "title": 95,
+          "company_name": 95,
+          "application_url": 95,
+          "external_id": 95,
+          "posted_at": 95,
+          "location": 95,
+          "employment_type": 95,
+          "description": 95,
+          "company_website": 0
+        },
+        "states": [
+          [
+            "OH",
+            95
+          ]
+        ],
+        "source_sites": [
+          "smartrecruiters"
+        ]
+      }
+    }
+  },
+  "ats_registry_warehouse_manager": {
+    "ats:greenhouse": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 1,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 49.8,
+        "dated": 1,
+        "fresh_14d": 1,
+        "with_company": 1,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:lever": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 1,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 17.4,
+        "dated": 1,
+        "fresh_14d": 1,
+        "with_company": 1,
+        "with_employment_type": 1,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.5,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:ashby": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 14.3,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:workable": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 1,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 6.2,
+        "dated": 1,
+        "fresh_14d": 1,
+        "with_company": 1,
+        "with_employment_type": 1,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:smartrecruiters": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 12,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 46.4,
+        "dated": 12,
+        "fresh_14d": 3,
+        "with_company": 12,
+        "with_employment_type": 12,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.5,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:bamboohr": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 6.6,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:breezy": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 5.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:jazzhr": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 9.1,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:recruitee": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 6.3,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    },
+    "ats:paylocity": {
+      "source_class": "ATS",
+      "handler": "ats-scrapers",
+      "enabled": true,
+      "disabled_reason": null,
+      "US": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 2.8,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": null,
+        "schema_problems": {}
+      },
+      "OH": {
+        "jobs": 0,
+        "stop_reason": "SOURCE_EXHAUSTED",
+        "error": "",
+        "seconds": 0.4,
+        "dated": 0,
+        "fresh_14d": 0,
+        "with_company": 0,
+        "with_employment_type": 0,
+        "in_ohio": 0,
+        "schema_problems": {}
+      }
+    }
+  },
+  "known_limits": [
+    "lever, jazzhr, breezy, ashby store mostly country-only locations ('US', 'United States'): state queries cannot reach those rows; nationwide queries use the 1,000-row budget.",
+    "jazzhr: 91% of US rows undated; the freshness stage (Phase 4) decides how undated rows are handled.",
+    "smartrecruiters is the largest slice in memory (~670 MB after filtering).",
+    "Apify actors are selected from documented schemas but not run: no APIFY_API_TOKEN."
+  ]
+}

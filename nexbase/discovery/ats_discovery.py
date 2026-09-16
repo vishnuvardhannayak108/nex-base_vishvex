@@ -8,11 +8,10 @@ High-quality, direct-employer hiring signals from applicant tracking systems
 * ``ats_scrapers.search()`` reads a **hosted static snapshot**. Called without
   an ``ats`` slice it downloads the *full* dataset - 5.2M rows, ~16.9 GB as of
   schema v2.0 - into memory and filters client-side. That is refused here
-  unless ``settings.ats_allow_full_snapshot`` is explicitly set. Named slices
-  are used instead, and their manifest size is checked before download.
-* The per-ATS scrapers (``GreenhouseScraper("acme").fetch()``) hit one tenant's
-  live careers API. Cheap, current, and the right tool for a named company.
-  Exposed here as :meth:`ATSDiscovery.fetch_company`.
+  unless ``settings.ats_allow_full_snapshot`` is explicitly set.
+* Named slices are read through :class:`ATSSliceStore`: downloaded once per
+  dataset version to a local cache, and read back with only the columns NexBase
+  maps, only US rows, and only rows inside the freshness window.
 
 The dataset also has no ``company_url``/``website`` column, so ATS rows never
 carry a real domain. :meth:`resolve_company_sites` fills that gap from the
@@ -22,8 +21,9 @@ from __future__ import annotations
 
 import re
 import threading
-from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 
 from tenacity import (
     retry,
@@ -39,9 +39,6 @@ from nexbase.core.source_tracking import ATS, SourceInfo
 from nexbase.core.timeutils import coerce_datetime
 from nexbase.logging_setup import get_logger
 
-#: Refuse any single slice larger than this without an explicit override.
-MAX_SLICE_BYTES = 2_000_000_000  # 2 GB
-
 _ATS_COLUMNS = {
     "external_id": ("global_id", "ats_id", "id"),
     "title": ("title",),
@@ -52,7 +49,16 @@ _ATS_COLUMNS = {
     "apply_url": ("apply_url", "url"),
     "ats_platform": ("ats_type", "ats"),
     "country": ("country_iso", "country"),
+    "employment_type": ("employment_type",),
 }
+
+#: Columns NexBase maps. The rest of a slice (the source-specific ``raw`` JSON,
+#: salary and geo detail) is never read.
+SLICE_COLUMNS = (
+    "global_id", "ats_id", "url", "apply_url", "title", "company", "ats_type",
+    "location", "country_iso", "is_remote", "employment_type", "description",
+    "posted_at",
+)
 
 
 def _pick(row: dict, keys: tuple[str, ...]):
@@ -63,11 +69,79 @@ def _pick(row: dict, keys: tuple[str, ...]):
     return None
 
 
-@dataclass
-class SliceInfo:
-    name: str
-    rows: int
-    size_bytes: int
+class ATSSliceStore:
+    """ATS slices on local disk, read back filtered to what a US run can use.
+
+    One file per dataset version: the manifest's sha256 changes when a slice is
+    regenerated, so an unchanged slice downloads once instead of once per run.
+    (That hash and ``size_bytes`` describe the CSV artifact - measured on
+    paylocity, 5.6 MB CSV vs 0.7 MB Parquet - so a download is verified by row
+    count, not by hash.)
+
+    Reading keeps only US rows and rows posted inside the freshness window. A
+    slice is mostly other countries and older postings, and the library's
+    ``limit`` truncates before any later filter could skip them. Undated rows
+    are kept for the freshness stage to judge.
+    """
+
+    def __init__(self, directory, max_age_days: int, logger=None) -> None:
+        self.directory = Path(directory).expanduser()
+        self.max_age_days = max_age_days
+        self.log = logger or get_logger("nexbase.discovery.ats.store")
+
+    def fetch(self, name: str, manifest) -> Path:
+        """Local path of the current version of slice ``name``."""
+        import httpx
+        import pyarrow.parquet as pq
+
+        entry = manifest.by_ats.get(name)
+        if entry is None or entry.parquet is None:
+            raise DiscoveryError(f"ATS slice {name!r} has no parquet artifact in the manifest")
+        version = (entry.sha256 or str(entry.size_bytes))[:16]
+        path = self.directory / f"{name}-{version}.parquet"
+        if path.exists():
+            return path
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+        part = path.with_suffix(".part")
+        with httpx.stream("GET", str(entry.parquet), follow_redirects=True,
+                          timeout=httpx.Timeout(60.0, read=300.0)) as response:
+            response.raise_for_status()
+            with part.open("wb") as fh:
+                for chunk in response.iter_bytes(1 << 20):
+                    fh.write(chunk)
+        rows = pq.ParquetFile(part).metadata.num_rows
+        if rows != entry.rows:
+            part.unlink(missing_ok=True)
+            raise DiscoveryError(
+                f"ATS slice {name!r} downloaded {rows} rows; the manifest lists {entry.rows}")
+        part.replace(path)
+        for older in self.directory.glob(f"{name}-*.parquet"):
+            if older != path:
+                older.unlink(missing_ok=True)
+        self.log.info("ats_slice_downloaded", ats=name, rows=rows,
+                      bytes=path.stat().st_size)
+        return path
+
+    def load(self, name: str, manifest, now: datetime | None = None):
+        import pandas as pd
+        import pyarrow.parquet as pq
+
+        path = self.fetch(name, manifest)
+        present = set(pq.read_schema(path).names)
+        filters = [("country_iso", "=", "US")] if "country_iso" in present else None
+        if filters is None:
+            self.log.warning("ats_slice_has_no_country", ats=name)
+        frame = pq.read_table(
+            path, columns=[c for c in SLICE_COLUMNS if c in present], filters=filters,
+        ).to_pandas()
+        us_rows = len(frame)
+        if "posted_at" in frame:
+            posted = pd.to_datetime(frame["posted_at"], utc=True, errors="coerce")
+            cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=self.max_age_days)
+            frame = frame[posted.isna() | (posted >= cutoff)].reset_index(drop=True)
+        self.log.info("ats_slice_read", ats=name, us_rows=us_rows, fresh_or_undated=len(frame))
+        return frame
 
 
 
@@ -142,6 +216,7 @@ def _caching_client_class():
         """
 
         slice_cache = None
+        slice_store = None
 
         def load(self, *, ats=None, date=None):
             cache = self.slice_cache
@@ -150,18 +225,22 @@ def _caching_client_class():
             if cache is None or ats is None or date is not None:
                 return Client.load(self, ats=ats, date=date)
             key = str(getattr(ats, "value", ats))
-            frame = cache.get(key, lambda: Client.load(self, ats=ats))
+            store = self.slice_store
+            loader = ((lambda: store.load(key, self.manifest)) if store is not None
+                      else (lambda: Client.load(self, ats=ats)))
+            frame = cache.get(key, loader)
             if frame is None:
-                return Client.load(self, ats=ats)
+                return loader()
             return frame
 
     return CachingClient
 
 
-def build_cached_client(cache: "ATSSliceCache | None"):
-    """An ats_scrapers Client that reads slices through ``cache``."""
+def build_cached_client(cache: "ATSSliceCache | None", store: "ATSSliceStore | None" = None):
+    """An ats_scrapers Client that reads slices through ``cache`` (and ``store``)."""
     client = _caching_client_class()()
     client.slice_cache = cache
+    client.slice_store = store
     return client
 
 
@@ -312,24 +391,14 @@ class ATSDiscovery:
         # downloaded once per run rather than once per probe. A standalone
         # instance gets its own, which still collapses repeats within one call.
         self.slice_cache = slice_cache if slice_cache is not None else ATSSliceCache(self.log)
+        self.slice_store = ATSSliceStore(
+            self.settings.ats_cache_dir, self.settings.freshness_max_days, self.log)
 
     # ------------------------------------------------------------------
     def _get_client(self):
         if self._client is None:
-            self._client = build_cached_client(self.slice_cache)
+            self._client = build_cached_client(self.slice_cache, self.slice_store)
         return self._client
-
-    def slice_info(self, ats: str) -> SliceInfo | None:
-        """Manifest metadata for one ATS slice, without downloading it."""
-        try:
-            manifest = self._get_client().manifest
-            entry = manifest.by_ats.get(ats)
-            if entry is None:
-                return None
-            return SliceInfo(name=ats, rows=entry.rows, size_bytes=entry.size_bytes)
-        except Exception as exc:
-            self.log.warning("ats_manifest_error", ats=ats, error=str(exc))
-            return None
 
     # ------------------------------------------------------------------
     def search(
@@ -340,7 +409,6 @@ class ATSDiscovery:
         ats: str | list[str] | None = None,
         remote: bool | None = None,
         limit: int | None = 500,
-        max_slice_bytes: int = MAX_SLICE_BYTES,
         client_industry: str | None = None,
     ) -> list[RawJob]:
         """Search one or more ATS dataset slices.
@@ -371,23 +439,12 @@ class ATSDiscovery:
         self.errors: list[str] = []
         dropped_out_of_state = 0
         for slice_name in slices:
-            info = self.slice_info(slice_name) if slice_name else None
-            if info and info.size_bytes > max_slice_bytes:
-                self.log.warning(
-                    "ats_slice_too_large",
-                    ats=slice_name,
-                    size_bytes=info.size_bytes,
-                    limit=max_slice_bytes,
-                )
-                continue
-
             self.log.info(
                 "ats_search_start",
                 query=query,
                 location=location,
                 company=company,
                 ats=slice_name,
-                rows=info.rows if info else None,
             )
             try:
                 df = _search_ats(
@@ -461,36 +518,6 @@ class ATSDiscovery:
         return list(ats)
 
     # ------------------------------------------------------------------
-    def fetch_company(self, ats: str, slug: str) -> list[RawJob]:
-        """Fetch one tenant's live postings via the per-ATS scraper layer.
-
-        Cheap and current, unlike the snapshot. Use when a company is already
-        known (from the companies directory or a resolved careers URL).
-        """
-        try:
-            from ats_scrapers.scrapers import get_scraper
-        except ImportError:  # pragma: no cover - older package layouts
-            get_scraper = None
-
-        try:
-            if get_scraper is not None:
-                scraper = get_scraper(ats, slug)
-            else:
-                import ats_scrapers.scrapers as scrapers_module
-
-                scraper = getattr(scrapers_module, f"{ats.title()}Scraper")(slug)
-            jobs = scraper.fetch()
-        except Exception as exc:
-            self.log.warning("ats_company_fetch_error", ats=ats, slug=slug, error=str(exc))
-            return []
-
-        records = []
-        for job in jobs:
-            row = job.model_dump() if hasattr(job, "model_dump") else dict(job)
-            records.append(self._to_raw_job(row))
-        self.log.info("ats_company_fetch", ats=ats, slug=slug, count=len(records))
-        return records
-
     # ------------------------------------------------------------------
     #: A directory row must look this much like the company we asked about
     #: before its URL is trusted. Below it, no domain is better than a wrong one.
@@ -646,6 +673,7 @@ class ATSDiscovery:
             apply_url=_pick(row, _ATS_COLUMNS["apply_url"]),
             ats_platform=_pick(row, _ATS_COLUMNS["ats_platform"]),
             country=_pick(row, _ATS_COLUMNS["country"]),
+            employment_type=_pick(row, _ATS_COLUMNS["employment_type"]),
             is_remote=row.get("is_remote"),
             company_industry=None,
             company_employee_count=None,

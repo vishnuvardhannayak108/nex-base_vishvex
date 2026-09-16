@@ -135,14 +135,23 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Source registry
     # ------------------------------------------------------------------
-    #: Portals switched off, comma-separated (e.g. "glassdoor,monster").
+    #: Portals switched off, comma-separated (e.g. "glassdoor,greenhouse").
     #: Every other registered portal runs.
-    sources_disabled: str = "monster"
+    sources_disabled: str = ""
     #: Minimum seconds between two calls to the same DIRECT or APIFY source.
     source_min_interval_seconds: float = 2.0
     #: Queries one source may run per pipeline run, state fan-out included.
     #: Hitting it is reported as BUDGET_REACHED.
     source_max_calls_per_run: int = 60
+
+    #: Apify sources run only with a token. Each call is paid per result, so
+    #: an Apify source gets its own, much smaller call budget and hard caps on
+    #: items and dollars per call.
+    apify_api_token: str = ""
+    apify_max_calls_per_run: int = 5
+    apify_max_items_per_query: int = 100
+    apify_max_charge_usd_per_call: float = 1.0
+    apify_timeout_seconds: int = 300
 
     # ------------------------------------------------------------------
     # Discovery source adapters
@@ -160,7 +169,9 @@ class Settings(BaseSettings):
 
     #: ats-scrapers with no slice downloads a ~17 GB snapshot. Opt-in only.
     ats_allow_full_snapshot: bool = False
-    ats_results_per_probe: int = 100
+    #: Downloaded ATS slices, one file per dataset version. Keep it out of any
+    #: synced folder: the slices together are hundreds of MB.
+    ats_cache_dir: str = "~/.cache/nexbase/ats"
     #: The ATS jobs dataset has no website column; fill it from the directory.
     ats_resolve_company_sites: bool = True
 

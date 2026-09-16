@@ -140,14 +140,15 @@ Engineering status for the Nex-Base delivery, built to the Master Plan
 
 One handler per portal; `SOURCES_DISABLED` switches portals off.
 
-- **DIRECT**: {portals("DIRECT")} (JobSpy handles indeed, linkedin, zip_recruiter,
-  glassdoor, google; NexBase board adapters the rest)
+- **DIRECT**: {portals("DIRECT")} (JobSpy handles indeed, linkedin; NexBase board
+  adapters the rest)
 - **ATS**: {portals("ATS")}
 - **APIFY**: {portals("APIFY")}
 - **Disabled**: {lst([x["portal"] for x in f["sources"] if not x["enabled"]])}
 - Per source: min interval, a **{f["source_max_calls"]}-call** budget per run,
   error tracking, metrics, provenance on every job
-- **Broken upstream in JobSpy** (Phase 3): `zip_recruiter` (403), `glassdoor` (400), `google` (cursor)
+- Verified live 2026-09-16: ZipRecruiter (403) and Glassdoor (400) moved to Apify;
+  Google Jobs and Monster removed. Evidence: `reports/phase3_source_verification.json`
 
 ## Discovery front door — Sector + Job
 

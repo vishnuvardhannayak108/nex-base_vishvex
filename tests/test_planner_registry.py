@@ -132,12 +132,12 @@ def test_a_second_handler_for_a_portal_is_refused():
 
 
 def test_sources_are_switched_off_by_settings(settings):
-    assert build_registry(settings).get("monster").enabled is False
-    settings.sources_disabled = "glassdoor, GREENHOUSE"
+    assert all(s.enabled for s in build_registry(settings).sources()
+               if s.source_class is not SourceClass.APIFY)
+    settings.sources_disabled = "linkedin, GREENHOUSE"
     registry = build_registry(settings)
-    assert registry.get("glassdoor").enabled is False
+    assert registry.get("linkedin").enabled is False
     assert registry.get("greenhouse").enabled is False
-    assert registry.get("monster").enabled is True
     assert registry.get("indeed").enabled is True
 
 
@@ -150,7 +150,8 @@ def _source(portal, adapter, source_class=SourceClass.DIRECT, **kwargs):
 
 def _job(key, site="indeed"):
     return RawJob(source_type="JOB_BOARD", source_priority=2, source_site=site,
-                  external_id=key, title="Welder", company_name="Acme")
+                  external_id=key, title="Welder", company_name="Acme",
+                  application_url=f"https://{site}.example/jobs/{key}")
 
 
 class Recorder:

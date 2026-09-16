@@ -78,10 +78,17 @@ and email verification are **not called** until their budget logic exists.
 
 | Class | Portals | Handler |
 |---|---|---|
-| DIRECT | indeed, linkedin, zip_recruiter, glassdoor, google | JobSpy |
-| DIRECT | simplyhired, talent_com, postjobfree, monster (off) | NexBase board adapters |
-| ATS | greenhouse, lever, ashby, workable, smartrecruiters, bamboohr, breezy, jazzhr, recruitee, paylocity | ats-scrapers |
-| APIFY | none registered yet | - |
+| DIRECT | indeed, linkedin | JobSpy |
+| DIRECT | simplyhired, talent_com, postjobfree | NexBase board adapters |
+| ATS | greenhouse, lever, ashby, workable, smartrecruiters, bamboohr, breezy, jazzhr, recruitee, paylocity | ats-scrapers (disk-cached slices) |
+| APIFY | glassdoor, zip_recruiter (off until `APIFY_API_TOKEN` is set) | Apify actors |
+
+Every portal was verified live on 2026-09-16; the evidence, and why
+ZipRecruiter and Glassdoor moved to Apify and Google Jobs and Monster were
+removed, is in [reports/phase3_source_verification.json](reports/phase3_source_verification.json).
+Every row a source returns must meet the Raw Job schema
+(`core.models.raw_job_problems`); rows that do not are dropped and counted per
+source (`schema_rejected`, `schema_problems`).
 
 Every source has: enabled/disabled state (`SOURCES_DISABLED`), a minimum
 interval between calls (`SOURCE_MIN_INTERVAL_SECONDS`, DIRECT/APIFY), a per-run
@@ -94,6 +101,11 @@ Execution per source: every title nationwide first; a query that comes back
 capped (`BUDGET_REACHED` / `SOURCE_LIMIT_REACHED`) fans out to all 51 state
 cells, until the call budget is spent. Failed queries never fan out. One broken
 source never stops the others.
+
+The 14-day window reaches the sources themselves: JobSpy `hours_old`,
+SimplyHired `t=14`, Talent.com `date=14`, Apify actor date inputs, and ATS
+slices read with only rows inside the window. PostJobFree has no date filter;
+the freshness stage handles it.
 
 ---
 
@@ -189,6 +201,12 @@ python scripts/build_industry_universe.py
 
 - **ats-scrapers full snapshot is ~16.9 GB.** Refused unless
   `ATS_ALLOW_FULL_SNAPSHOT=true`; named slices are used instead.
+- **ATS slices** download once per dataset version to `ATS_CACHE_DIR`
+  (~430 MB for all ten) and are read as US rows inside the freshness window.
+  Lever, JazzHR, Breezy and Ashby mostly store country-only locations, so state
+  queries cannot reach those rows; JazzHR rows are mostly undated.
+- **Apify** actors are paid per result and were chosen from their documented
+  output schemas; they have not been run by NexBase until a token is supplied.
 - **LinkedIn applicant counts** are read from the public logged-out page only;
   a missing count never disqualifies a company.
 - **Supabase direct connections**: use the Session pooler URI.

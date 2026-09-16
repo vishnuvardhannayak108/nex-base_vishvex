@@ -8,6 +8,72 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 3 — Direct sources + ATS + JobSpy cleanup (2026-09-16)
+
+Tests: 678 before, **710 passed** after (0 failed); 29 new in
+`tests/test_sources.py`. Every source was tested live, nationwide and for Ohio;
+the evidence is in `reports/phase3_source_verification.json`.
+
+### Live verdicts
+
+| Portal | Result | Decision |
+|---|---|---|
+| Indeed (JobSpy) | 20 jobs both queries, all dated | kept (DIRECT) |
+| LinkedIn (JobSpy) | 20 jobs both queries, 17-20 dated | kept (DIRECT) |
+| SimplyHired | 20 jobs, 11 of 20 undated | kept, fixed: 25/25 dated and fresh |
+| Talent.com | 17-38 jobs, 15 of 38 fresh | kept, fixed: 40/40 fresh |
+| PostJobFree | 10 jobs per page, dated | kept |
+| ZipRecruiter (JobSpy) | 403 Cloudflare, both queries | moved to Apify |
+| Glassdoor (JobSpy) | 400 "location not parsed", both queries | moved to Apify |
+| Google Jobs (JobSpy) | always empty | removed |
+| Monster | page with no job rows (2026-09-14) | removed |
+| 10 ATS slices | all download and read; no errors | all kept |
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `zip_recruiter`, `glassdoor`, `google` from `JOBSPY_PORTALS` | registry | `test_planner_registry.py` catalog test | Failed live; see verdicts |
+| `MonsterDiscovery` | `BOARD_SCRAPERS` only | `test_discovery.py` (3 Monster tests) | Not a reliable source; not in the plan's list |
+| `ATSDiscovery.slice_info`, `SliceInfo`, `MAX_SLICE_BYTES` size guard | `ATSDiscovery.search` | 3 monkeypatches in `test_hardening.py` | The guard read the manifest's `size_bytes`, which is the CSV size, not the downloaded Parquet |
+| `ATSDiscovery.fetch_company` | none (0 callers) | none | Dead |
+| `ats_results_per_probe` setting | ATS adapter | none | ATS queries a small local frame; uses the general per-query budget |
+| JobSpy `HOURS_OLD_AWARE`, `JobSpyQuery`, `google_search_term` | none / Google only | none | Dead once Google left JobSpy |
+| Root reports `live_smoke_report.json`, `phase1_phase2_report.json`, `portal_expansion_report.json`, `source_coverage_report.json` | none | none | 2026-09-14 source evidence, superseded by `reports/phase3_source_verification.json` |
+
+### Added / changed
+
+- **Raw Job schema** (`core.models.raw_job_problems`): source type, portal,
+  title and URL required. The registry drops rows that fail and counts them per
+  source (`schema_rejected`, `schema_problems`).
+- **Apify** (`discovery/apify_sources.py`): `agentx~glassdoor-jobs-scraper` and
+  `silentflow~ziprecruiter-scraper-ppe`, chosen for documented output schemas
+  that include a posting date. Token in a header; `maxItems` and
+  `maxTotalChargeUsd` per call; `APIFY_MAX_CALLS_PER_RUN=5`. Off until
+  `APIFY_API_TOKEN` is set (`disabled_reason` says so). **Not run yet.**
+- **SimplyHired**: reads `__NEXT_DATA__` (exact `dateOnIndeed`, job types).
+- **Board date filters** verified live and pushed down: SimplyHired `t`,
+  Talent.com `date` (7 or 14 days).
+- **Parse-failure detection**: an empty first page without the board's own
+  "no results" text is `ERROR`/`PARSE_FAILED`, not `SOURCE_EXHAUSTED`.
+- **ATS store** (`ATSSliceStore`): slices cached on disk per dataset version in
+  `ATS_CACHE_DIR` (default `~/.cache/nexbase/ats`, outside OneDrive), verified by
+  row count, read with only mapped columns, US rows and the freshness window.
+  Greenhouse: 180,612 rows -> 6,540, ~86 MB in memory instead of ~1.6 GB.
+  ATS rows now carry `employment_type`; per-slice failures are reported as
+  `ERROR` instead of an empty result.
+- `SOURCES_DISABLED` default is now empty.
+
+### Known limits
+
+- Lever, JazzHR, Breezy and Ashby store mostly country-only locations, so state
+  queries cannot reach those rows.
+- JazzHR: 91% of US rows undated (Phase 4 decides how undated rows are handled).
+- SmartRecruiters is ~670 MB in memory after filtering.
+- A 14-day date filter on PostJobFree does not exist; freshness handles it.
+
+---
+
 ## Phase 2 — USA-wide planner + source registry (2026-09-16)
 
 Tests: 709 before, **678 passed** after (0 failed). 29 new tests in
@@ -122,6 +188,6 @@ removed behaviour; the rest were updated to new signatures and rules.
 |---|---|
 | ~~Run input still accepts search terms, location, size band and source lists~~ | done in 2 |
 | ~~`discovery/` not yet split into planner + source registry~~ | done in 2 (as modules in `discovery/`) |
-| JobSpy defaults still include `zip_recruiter`, `glassdoor`, `google` | 3 |
+| ~~JobSpy defaults still include `zip_recruiter`, `glassdoor`, `google`~~ | done in 3 |
 | Job dedup and company dedup run together, before freshness; P1/P2/P3 freshness tiers | 4 |
 | `contacts_for_review_companies=True` (plan: contact discovery on QUALIFIED only) | 6 |

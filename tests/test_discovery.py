@@ -8,8 +8,9 @@ from nexbase.core.errors import DiscoveryError
 from nexbase.discovery import taxonomy
 from nexbase.discovery.ats_discovery import ATSDiscovery
 from nexbase.discovery.board_scrapers import (
-    MonsterDiscovery,
+    PostJobFreeDiscovery,
     SimplyHiredDiscovery,
+    TalentComDiscovery,
     parse_relative_age,
 )
 from nexbase.discovery.jobspy_discovery import SUPPORTED_SITES, JobSpyDiscovery
@@ -150,7 +151,7 @@ def test_ats_row_has_no_fabricated_domain(settings):
 
 
 # ---------------------------------------------------------------------------
-# Monster / SimplyHired
+# Board adapters: schema.org JobPosting
 # ---------------------------------------------------------------------------
 JOBPOSTING_HTML = """
 <html><body>
@@ -161,7 +162,7 @@ JOBPOSTING_HTML = """
    "sameAs":"https://toledoplastics.com"},
  "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress",
    "addressLocality":"Toledo","addressRegion":"OH"}},
- "url":"https://www.monster.com/job-openings/abc",
+ "url":"https://www.example-board.com/job-openings/abc",
  "identifier":{"@type":"PropertyValue","value":"abc"},
  "description":"<p>Maintain production lines.</p>"}
 </script>
@@ -169,7 +170,7 @@ JOBPOSTING_HTML = """
 """
 
 
-@pytest.mark.parametrize("cls", [MonsterDiscovery, SimplyHiredDiscovery])
+@pytest.mark.parametrize("cls", [SimplyHiredDiscovery, TalentComDiscovery, PostJobFreeDiscovery])
 def test_board_scrapers_parse_jsonld(cls):
     jobs = cls().parse(JOBPOSTING_HTML, "https://example.com/search")
     assert len(jobs) == 1
@@ -183,14 +184,13 @@ def test_board_scrapers_parse_jsonld(cls):
 
 
 def test_board_search_urls_well_formed():
-    monster = MonsterDiscovery().search_url("plant manager", "Toledo, OH")
     simply = SimplyHiredDiscovery().search_url("plant manager", "Toledo, OH")
-    assert "monster.com" in monster and "plant+manager" in monster
     assert "simplyhired.com" in simply and "plant+manager" in simply
 
 
-def test_board_scraper_returns_nothing_for_empty_html():
-    assert MonsterDiscovery().parse("", "https://x") == []
+@pytest.mark.parametrize("cls", [SimplyHiredDiscovery, TalentComDiscovery, PostJobFreeDiscovery])
+def test_board_scraper_returns_nothing_for_empty_html(cls):
+    assert cls().parse("", "https://x") == []
 
 
 @pytest.mark.parametrize(
@@ -278,14 +278,14 @@ def test_unparseable_age_is_none_not_a_guess(text):
     assert parse_relative_age(text) is None
 
 
-def test_monster_is_disabled_after_live_failure():
-    """Fetches fine but serves no job rows; enabling it would yield silent zeros."""
+def test_monster_is_gone_after_live_failure():
+    """It fetched fine but served no job rows; a silent-zero source is not kept."""
     from nexbase.config import Settings
+    from nexbase.discovery.board_scrapers import BOARD_SCRAPERS
     from nexbase.discovery.registry import build_registry
 
-    registry = build_registry(Settings(_env_file=None))
-    assert registry.get("monster").enabled is False
-    assert registry.get("simplyhired").enabled is True
+    assert "monster" not in BOARD_SCRAPERS
+    assert build_registry(Settings(_env_file=None)).get("monster") is None
 
 
 # ---------------------------------------------------------------------------

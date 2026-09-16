@@ -2012,7 +2012,6 @@ def test_ats_search_drops_rows_the_dataset_matched_by_substring(settings, monkey
         return pd.DataFrame(rows)
 
     monkeypatch.setattr(mod, "_search_ats", fake_search)
-    monkeypatch.setattr(mod.ATSDiscovery, "slice_info", lambda self, ats: None)
 
     jobs = mod.ATSDiscovery(settings).search(
         query="construction project manager", location="Denver, CO",
@@ -2048,7 +2047,6 @@ def test_a_slice_that_matched_nothing_is_retried_with_the_state_name(settings, m
         ])
 
     monkeypatch.setattr(mod, "_search_ats", fake_search)
-    monkeypatch.setattr(mod.ATSDiscovery, "slice_info", lambda self, ats: None)
 
     jobs = mod.ATSDiscovery(settings).search(
         query="machinist", location="Columbus, OH", ats="workable", limit=100)
@@ -2073,7 +2071,6 @@ def test_the_state_name_retry_still_verifies_what_comes_back(settings, monkeypat
         ])
 
     monkeypatch.setattr(mod, "_search_ats", fake_search)
-    monkeypatch.setattr(mod.ATSDiscovery, "slice_info", lambda self, ats: None)
 
     assert mod.ATSDiscovery(settings).search(
         query="machinist", location="Columbus, OH", ats="workable") == []

@@ -240,12 +240,11 @@ class BoardScraper(ABC):
             if self.details_fetched >= self.detail_page_budget:
                 return
             # Fetch when anything the pipeline needs is missing. SimplyHired
-            # cards carry none of the three: no description, no posting date
-            # (so freshness drops the job) and no employment type (so the
-            # client's full-time rule has nothing to judge).
+            # cards carry neither: no description and no posting date (so
+            # freshness drops the job).
             if not job.application_url:
                 continue
-            if job.description and job.posted_at and job.employment_type:
+            if job.description and job.posted_at:
                 continue
             self.details_fetched += 1
             try:

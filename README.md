@@ -109,9 +109,8 @@ the freshness stage handles it.
 
 ## Normalization, deduplication, freshness, company identity
 
-- **Normalization** screens out postings with no employer name (`NO_COMPANY_NAME`),
-  outside the US (`NOT_US`), or with a stated non-full-time type (`NOT_FULL_TIME`),
-  and parses location into city / state / country and the posting date into UTC
+- **Normalization** screens out postings with no employer name (`NO_COMPANY_NAME`)
+  or outside the US (`NOT_US`), and parses location into city / state / country and the posting date into UTC
   with its precision (`DAY` for date-only sources, `TIME` for timestamps).
 - **Job dedup** is conservative: the same `(source_site, external_id)` is one job;
   a cross-post needs the same company, title and a state-level location, and
@@ -123,8 +122,10 @@ the freshness stage handles it.
   rejected as `MISSING_POSTING_DATE`. Every rejection is recorded with its reason.
 - **Company identity** uses the strongest evidence first: website domain >
   employer (apply) URL domain with the same name > source company id (Indeed
-  `/cmp/`, LinkedIn `/company/`, ATS tenant) > name + state. Weaker evidence never
-  joins two different domains. `companies.identity_basis` / `identity_key` record
+  `/cmp/`, LinkedIn `/company/`, ATS tenant) > name + state. A name alone never
+  merges: such a posting is its own `NAME_ONLY` company, and when another company
+  shares the name it is flagged `AMBIGUOUS_COMPANY_IDENTITY` and sent to review.
+  Weaker evidence never joins two different domains. `companies.identity_basis` / `identity_key` record
   which rule applied.
 
 ---

@@ -12,6 +12,10 @@ evidence is ranked, strongest first:
    page, a LinkedIn ``/company/`` page, an ATS tenant (greenhouse, lever, ...).
 4. **NAME_LOCATION** - normalized employer name plus US state.
 
+A posting with none of these (a name but no domain, source id or state) is
+**NAME_ONLY** and never merged on the name alone. When another company shares
+its name, it is marked ``identity_ambiguous`` so qualification sends it to review.
+
 Weaker evidence never overrides stronger: a source id or a name+state match that
 would join two companies with *different* domains joins nothing; only the
 domainless postings in that group are merged with each other.
@@ -71,11 +75,13 @@ class CompanyAggregate:
     company_name_normalized: str
     domain: str
     jobs: list[NormalizedJob] = field(default_factory=list)
-    #: DOMAIN | EMPLOYER_URL | SOURCE_ID | NAME_LOCATION
+    #: DOMAIN | EMPLOYER_URL | SOURCE_ID | NAME_LOCATION | NAME_ONLY
     identity_basis: str = "NAME_LOCATION"
     #: The evidence the company is keyed on, e.g. "domain:acme.com".
     identity_key: str = ""
     source_ids: list[str] = field(default_factory=list)
+    #: NAME_ONLY and another company has the same name: it may be that company.
+    identity_ambiguous: bool = False
 
     @property
     def merged_sources(self) -> set[str]:
@@ -220,8 +226,8 @@ def identify_companies(fresh: list[tuple[NormalizedJob, object]]) -> tuple[list[
     # 3. Source company ids.
     for members in groups(lambda j: [("source", s) for s in sorted(source_ids(j))]):
         stats["conflicts"] += not components.union_if_consistent(members)
-    # 4. Name + state (postings with no state share a name-only key).
-    for members in groups(lambda j: [("name", j.company_name_normalized, j.state or "")]):
+    # 4. Name + state. A name alone joins nothing.
+    for members in groups(lambda j: [("name", j.company_name_normalized, j.state)] if j.state else []):
         stats["conflicts"] += not components.union_if_consistent(members)
 
     by_root: dict[int, list[int]] = {}
@@ -229,8 +235,13 @@ def identify_companies(fresh: list[tuple[NormalizedJob, object]]) -> tuple[list[
         by_root.setdefault(components.find(i), []).append(i)
 
     companies = [_company([fresh[i] for i in members]) for members in by_root.values()]
+    names = Counter(c.company.company_name_normalized for c in companies)
+    for c in companies:
+        c.company.identity_ambiguous = (c.company.identity_basis == "NAME_ONLY"
+                                        and names[c.company.company_name_normalized] > 1)
     companies.sort(key=lambda c: (-c.hiring_intensity, c.company.dedup_key))
     stats["basis"] = dict(Counter(c.company.identity_basis for c in companies))
+    stats["ambiguous"] = sum(c.company.identity_ambiguous for c in companies)
     return companies, stats
 
 
@@ -248,10 +259,14 @@ def _company(pairs: list[tuple[NormalizedJob, object]]) -> FreshCompany:
         key = f"domain:{domain}"
     elif ids:
         basis, key = "SOURCE_ID", f"source:{ids[0]}"
-    else:
-        states = Counter(j.state for j in jobs if j.state)
-        state = states.most_common(1)[0][0].lower() if states else ""
+    elif any(j.state for j in jobs):
+        state = Counter(j.state for j in jobs if j.state).most_common(1)[0][0].lower()
         basis, key = "NAME_LOCATION", f"name:{name}|{state}"
+    else:
+        # A single posting (nothing merged it): keyed on the posting itself.
+        job = jobs[0]
+        basis = "NAME_ONLY"
+        key = f"name:{name}|posting:{job.source_site}:{job.external_id or job.evidence_url}"
 
     raw_names = [j.company_name for j in jobs if j.company_name]
     company = CompanyAggregate(
@@ -270,7 +285,8 @@ class CompanyIdentifier:
         companies, stats = identify_companies(fresh)
         self.log.info("company_identification_complete", jobs=len(fresh),
                       companies=len(companies), identity_basis=stats["basis"],
-                      domain_conflicts=stats["conflicts"])
+                      domain_conflicts=stats["conflicts"],
+                      ambiguous_identities=stats["ambiguous"])
         return companies
 
 

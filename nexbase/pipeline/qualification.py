@@ -261,6 +261,11 @@ def score_company(
     if ta.ta_role_count >= settings.internal_ta_review_threshold:
         review_flags.append("POSSIBLE_INTERNAL_TA")
 
+    # --- Company identity -------------------------------------------------
+    breakdown["identity_basis"] = fresh.company.identity_basis
+    if fresh.company.identity_ambiguous:
+        review_flags.append("AMBIGUOUS_COMPANY_IDENTITY")
+
     # --- Positive scoring -------------------------------------------------
     score = 0.0
 
@@ -307,7 +312,9 @@ def score_company(
     breakdown["total"] = round(score, 2)
 
     # --- Verdict ----------------------------------------------------------
-    if score < settings.qualify_threshold:
+    # An ambiguous identity splits a company's postings, so its score is not
+    # trustworthy either way: review it rather than reject it.
+    if score < settings.qualify_threshold and not fresh.company.identity_ambiguous:
         reasons.append("LOW_SCORE")
         status = QualificationStatus.REJECTED
     elif review_flags:

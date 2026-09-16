@@ -342,42 +342,6 @@ def is_us_location(country: str | None, location: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Employment type
-# ---------------------------------------------------------------------------
-#: Employment types excluded outright (contract, part-time, temporary,
-#: contract-to-hire, freelance, independent contractor, seasonal). Matched as
-#: substrings because sources spell these many ways.
-EXCLUDED_EMPLOYMENT_TOKENS = (
-    "part time", "parttime", "part-time",
-    "contract", "contractor", "c2h", "corp to corp", "corp-to-corp",
-    "temp", "temporary", "seasonal", "freelance", "intern", "volunteer",
-    "per diem", "perdiem", "casual",
-)
-
-#: Spellings that positively identify a full-time role.
-FULL_TIME_TOKENS = ("full time", "fulltime", "full-time", "permanent", "regular")
-
-
-def employment_verdict(employment_type: str | None) -> tuple[bool, str | None]:
-    """Return ``(acceptable, reason)`` for a source-reported employment type.
-
-    An unstated type is accepted rather than guessed at: most boards publish
-    nothing. Only a type the source actually stated can exclude.
-    """
-    if not employment_type:
-        return True, None
-    # schema.org spells these PART_TIME / FULL_TIME, boards "Part-time".
-    value = re.sub(r"[_\-/]+", " ", str(employment_type).strip().lower())
-    value = re.sub(r"\s+", " ", value)
-    if any(token in value for token in FULL_TIME_TOKENS):
-        return True, None
-    for token in EXCLUDED_EMPLOYMENT_TOKENS:
-        if token in value:
-            return False, f"NOT_FULL_TIME:{value[:40]}"
-    return True, None
-
-
-# ---------------------------------------------------------------------------
 # Dates
 # ---------------------------------------------------------------------------
 def normalize_posted_at(value) -> tuple[datetime | None, str | None]:
@@ -441,7 +405,7 @@ class NormalizedJob:
 
     @property
     def is_actionable(self) -> bool:
-        """In scope: an employer name, in the US, and not excluded by type."""
+        """In scope: an employer name and in the US."""
         return self.screen_reason is None
 
 
@@ -449,15 +413,14 @@ def screen_reason(job: NormalizedJob) -> str | None:
     """Why a posting cannot become a lead, or None.
 
     A posting without an employer name has nothing to research or contact and
-    would manufacture a phantom company. A posting outside the US, or with a
-    stated non-full-time type, is out of scope however fresh it is.
+    would manufacture a phantom company. A posting outside the US is out of
+    scope however fresh it is.
     """
     if not job.company_name_normalized:
         return "NO_COMPANY_NAME"
     if job.country not in (None, "US"):
         return "NOT_US"
-    acceptable, reason = employment_verdict(job.employment_type)
-    return None if acceptable else reason
+    return None
 
 
 def normalize_job(raw: RawJob) -> NormalizedJob:

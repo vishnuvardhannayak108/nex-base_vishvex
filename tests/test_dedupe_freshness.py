@@ -79,12 +79,6 @@ def test_out_of_scope_postings_are_screened_with_a_reason(make_job, overrides, r
     assert normalize_job(make_job(**overrides)).screen_reason == reason
 
 
-def test_a_stated_non_full_time_type_is_screened(make_job):
-    job = make_job()
-    job.employment_type = "Part-time"
-    assert normalize_job(job).screen_reason.startswith("NOT_FULL_TIME")
-
-
 # ===========================================================================
 # Job deduplication
 # ===========================================================================
@@ -275,6 +269,33 @@ def test_same_name_in_different_states_is_two_companies_with_distinct_keys(make_
     keys = {c.company.dedup_key for c in companies}
     assert keys == {("NO_DOMAIN", "name:summit construction|co"),
                     ("NO_DOMAIN", "name:summit construction|fl")}
+
+
+def test_a_name_alone_never_merges_and_the_ambiguity_goes_to_review(make_job, settings, now):
+    companies = _companies([
+        make_job(company="Summit Construction", title="Carpenter", location="Remote", external_id="a"),
+        make_job(company="Summit Construction", title="Electrician", location="Remote", external_id="b"),
+        make_job(company="Summit Construction", title="Laborer", location="Denver, CO", external_id="c"),
+    ], settings, now)
+
+    assert len(companies) == 3
+    by_basis = sorted((c.company.identity_basis, c.company.identity_ambiguous) for c in companies)
+    assert by_basis == [("NAME_LOCATION", False), ("NAME_ONLY", True), ("NAME_ONLY", True)]
+    assert len({c.company.dedup_key for c in companies}) == 3
+
+    from nexbase.pipeline.qualification import QualificationGate
+    from nexbase.pipeline.profile import build_profile
+
+    ambiguous = [c for c in companies if c.company.identity_ambiguous]
+    results = QualificationGate(settings).qualify(
+        ambiguous, {c.company.dedup_key: build_profile(c) for c in ambiguous})
+    assert all(r.status == "NEEDS_REVIEW" for r in results)
+    assert all("AMBIGUOUS_COMPANY_IDENTITY" in r.review_flags for r in results)
+
+
+def test_a_name_only_company_with_a_unique_name_is_not_ambiguous(make_job, settings, now):
+    company = _companies([make_job(company="Lone Mfg", location="Remote")], settings, now)[0].company
+    assert (company.identity_basis, company.identity_ambiguous) == ("NAME_ONLY", False)
 
 
 def test_weaker_evidence_never_joins_two_domains(make_job, settings, now):

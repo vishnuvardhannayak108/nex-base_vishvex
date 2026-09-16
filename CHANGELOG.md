@@ -8,6 +8,16 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 4 review adjustments (2026-09-16)
+
+Tests: 746 before, **727 passed** after (0 failed): 21 employment-type cases removed, 2 identity tests added.
+
+| Removed / changed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `employment_verdict`, `EXCLUDED_EMPLOYMENT_TOKENS`, `FULL_TIME_TOKENS`, `NOT_FULL_TIME` screen | `normalize.screen_reason` only | `test_hardening.py` (`test_employment_type_rules`, `test_schema_org_employment_types`, `test_non_full_time_job_is_rejected_before_age`), `test_dedupe_freshness.py` (1) | Not part of the Master Plan (review decision). `employment_type` is still carried as source data |
+| Board detail fetch no longer triggered by a missing `employment_type` | `BoardScraper` detail loop | `test_detail_page_supplies_date_and_employment_type` (still passes) | That fetch existed only for the full-time rule; description and posting date still trigger it |
+| Name-only company merge (postings with no domain, source id or state shared a `name:<name>\|` key) | `company_identity.identify_companies` | new tests in `test_dedupe_freshness.py` | Too weak to merge on (review decision). Each such posting is a `NAME_ONLY` company; if its name is shared it gets `identity_ambiguous`, review flag `AMBIGUOUS_COMPANY_IDENTITY`, and NEEDS_REVIEW instead of a LOW_SCORE rejection |
+
 ## Phase 4 — Normalization, job dedup, freshness, company identity (2026-09-16)
 
 Tests: 710 before, **746 passed** after (0 failed). `tests/test_dedupe_freshness.py`
@@ -23,7 +33,7 @@ freshness -> company identification + dedup -> qualification.
 - `normalize.py`: `normalize_title`, stronger `normalize_company_name` (accents,
   `&`/and, apostrophes, legal suffixes, leading "the"), `normalize_location` ->
   city / state / country / remote, `normalize_posted_at` with `DAY`/`TIME`
-  precision, and screening reasons `NO_COMPANY_NAME`, `NOT_US`, `NOT_FULL_TIME`.
+  precision, and screening reasons `NO_COMPANY_NAME`, `NOT_US` (`NOT_FULL_TIME` removed in review).
 - `dedupe.py`: job-only dedup. Same `(source_site, external_id)` -> `SAME_SOURCE_ID`;
   same company + title + state-level location on different portals ->
   `CROSS_POSTED`, never across two employer domains. Audit trail in `raw.duplicates`.
@@ -57,8 +67,7 @@ freshness -> company identification + dedup -> qualification.
 
 ### Open decisions
 
-- Full-time-only screening is not in the Master Plan; it was kept (moved to
-  normalization) because the previous spec required it.
+- ~~Full-time-only screening~~ removed in the review adjustments above.
 - Domain resolution by web search still runs inside qualification, after identity.
 - Schema changes are not yet applied to the live Supabase.
 

@@ -844,24 +844,6 @@ def test_bracketed_obfuscation_is_still_decoded(html, expected):
 # Client spec 2026-09-14: job rules, contact stages, evidence schema
 # ===========================================================================
 @pytest.mark.parametrize(
-    "employment_type,acceptable",
-    [
-        ("fulltime", True), ("Full-time", True), ("permanent", True),
-        (None, True),  # unstated is not a rejection - most boards publish none
-        ("contract", False), ("Contract to Hire", False), ("part-time", False),
-        ("temporary", False), ("seasonal", False), ("internship", False),
-        ("freelance", False), ("per diem", False),
-    ],
-)
-def test_employment_type_rules(employment_type, acceptable):
-    from nexbase.pipeline.normalize import employment_verdict
-
-    ok, reason = employment_verdict(employment_type)
-    assert ok is acceptable
-    assert (reason is None) is acceptable
-
-
-@pytest.mark.parametrize(
     "country,location,is_us",
     [
         ("us", "Columbus, OH", True), ("USA", "anywhere", True),
@@ -874,14 +856,6 @@ def test_us_only_gate(country, location, is_us):
     from nexbase.pipeline.normalize import is_us_location
 
     assert is_us_location(country, location) is is_us
-
-
-def test_non_full_time_job_is_rejected_before_age(make_job, settings, now):
-    job = make_job(company="Acme Manufacturing", title="Welder", days_old=1)
-    job.employment_type = "contract"
-    normalized, discarded = Normalizer().normalize([job])
-    assert normalized == []
-    assert discarded[0].screen_reason.startswith("NOT_FULL_TIME")
 
 
 def test_non_us_job_is_rejected(make_job, settings, now):
@@ -992,25 +966,6 @@ def test_manufacturing_subtypes_still_qualify(make_job, settings, now):
     )[0]
     result = score_company(fresh, build_profile(fresh), settings)
     assert result.status != QualificationStatus.REJECTED.value
-
-
-@pytest.mark.parametrize(
-    "employment_type,acceptable",
-    [
-        ("FULL_TIME", True),
-        ("PART_TIME", False),          # schema.org spelling; underscores broke matching
-        ("PART_TIME, FULL_TIME", True),  # offered full-time, so in scope
-        ("CONTRACTOR", False),
-        ("TEMPORARY", False),
-        ("INTERN", False),
-        ("OTHER", True),               # unrecognised is not a rejection
-    ],
-)
-def test_schema_org_employment_types(employment_type, acceptable):
-    """SimplyHired publishes schema.org spellings; PART_TIME was slipping through."""
-    from nexbase.pipeline.normalize import employment_verdict
-
-    assert employment_verdict(employment_type)[0] is acceptable
 
 
 def test_detail_page_supplies_date_and_employment_type(settings):

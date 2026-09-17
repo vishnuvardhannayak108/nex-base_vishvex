@@ -46,6 +46,8 @@ from nexbase.enrichment.base import (
     EnrichmentCallResult,
     EnrichmentData,
     EnrichmentProvider,
+    ProviderCall,
+    failure_status,
 )
 from nexbase.logging_setup import get_logger
 
@@ -62,20 +64,6 @@ CONTACT_OUTPUT_FIELDS = [
 _TOKEN_TTL_SECONDS = 55 * 60
 #: Documented maximum inputs per enrich request.
 MAX_ENRICH_INPUTS = 25
-
-
-@dataclass
-class ApiCall:
-    """One request that left the process, for enrichment_logs."""
-
-    endpoint: str
-    payload: dict
-    status: str
-    records: int = 0
-    error: str | None = None
-    #: Upper bound: every record returned by an enrich endpoint may charge one.
-    credit_cost: float = 0.0
-    billable: bool = False
 
 
 @dataclass
@@ -103,7 +91,7 @@ class ZoomInfoProvider(EnrichmentProvider):
         self._token: str | None = None
         self._token_expires_at: float = 0.0
         self._lock = threading.Lock()
-        self.calls: list[ApiCall] = []
+        self.calls: list[ProviderCall] = []
 
     def is_configured(self) -> bool:
         return bool(self.settings.zoominfo_api_key and self.settings.zoominfo_api_url)
@@ -152,12 +140,13 @@ class ZoomInfoProvider(EnrichmentProvider):
         response.raise_for_status()
         return response.json()
 
-    def _call(self, path: str, payload: dict) -> tuple[dict | None, ApiCall]:
-        call = ApiCall(endpoint=self._url(path), payload=payload, status="SUCCESS")
+    def _call(self, path: str, payload: dict) -> tuple[dict | None, ProviderCall]:
+        call = ProviderCall(endpoint=self._url(path), payload=payload, status="SUCCESS")
         try:
             body = self._post(path, payload)
         except Exception as exc:
-            call.status, call.error = "ERROR", str(exc)
+            # Timeout, rate limit (429), refused credentials (401/403) or error.
+            call.status, call.error = failure_status(exc), str(exc)
             # An error returns no record, so ZoomInfo charges no credit.
             call.billable = False
             self.calls.append(call)

@@ -173,10 +173,10 @@ def test_pipeline_order_is_unchanged():
     assert positions == sorted(positions), "pipeline stages are out of order"
 
 
-def test_runner_calls_no_later_phase_provider_and_sends_nothing():
-    """Phase 7 wires ZoomInfo only: Apollo, Apify enrichment, verification and outreach stay out."""
+def test_runner_calls_no_verification_and_sends_nothing():
+    """Enrichment is wired; email verification and outreach stay out."""
     src = Path("nexbase/pipeline/runner.py").read_text(encoding="utf-8")
-    for name in ("ApolloProvider", "EmailVerifier", "ZeroBounce", "outreach"):
+    for name in ("EmailVerifier", "ZeroBounce", "outreach"):
         assert name not in src, name
 
 

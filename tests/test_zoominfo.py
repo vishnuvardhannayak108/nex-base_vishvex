@@ -24,9 +24,10 @@ from nexbase.email.discovery import (
     EmailDiscovery,
     classify_email,
 )
+from nexbase.enrichment.base import CompanyContext
+from nexbase.enrichment.waterfall import EnrichmentWaterfall, person_key
 from nexbase.enrichment.zoominfo import ZoomInfoProvider
-from nexbase.enrichment.zoominfo_stage import ZoomInfoEnrichment, person_key
-from nexbase.pipeline.company_identity import prepare_companies
+from nexbase.enrichment.zoominfo_stage import ZoomInfoAdapter
 from nexbase.pipeline.runner import PipelineRunner
 from tests.conftest import RecordingRepo
 from tests.test_pipeline_e2e import StubAccess
@@ -190,11 +191,11 @@ def test_errors_and_no_match_charge_nothing(zi_settings):
     assert provider.search_contacts(77, ["CEO"]) == []
     no_match, error = provider.calls
     assert (no_match.status, no_match.credit_cost) == ("NO_MATCH", 0.0)
-    assert (error.status, error.billable, error.credit_cost) == ("ERROR", False, 0.0)
+    assert (error.status, error.billable, error.credit_cost) == ("PROVIDER_ERROR", False, 0.0)
 
 
 # ===========================================================================
-# Enrichment stage
+# ZoomInfo as the primary provider (waterfall with ZoomInfo only)
 # ===========================================================================
 @dataclass
 class Lead:
@@ -205,12 +206,9 @@ class Lead:
     observed_emails: list = field(default_factory=list)
 
 
-def _fc(make_job, settings, now, **job):
-    fields = dict(company="Acme Manufacturing", title="Welder", employees="51 to 200",
-                  industry="Manufacturing", company_website="https://acme-mfg.com",
-                  location="Toledo, OH")
-    fields.update(job)
-    return prepare_companies([make_job(**fields)], settings, now)[0][0]
+def _company(domain="acme-mfg.com", states=("OH",)):
+    return CompanyContext(name="Acme Manufacturing", name_normalized="acme manufacturing",
+                          domain=domain, states=frozenset(states))
 
 
 def _public(name, title, priority, email=None, cid="c-1"):
@@ -220,77 +218,85 @@ def _public(name, title, priority, email=None, cid="c-1"):
             "source_url": "https://acme-mfg.com/leadership", "extraction": "text", "origin": "PUBLIC"}
 
 
-def _stage(settings, fake, repo=None):
-    return ZoomInfoEnrichment(repo or RecordingRepo(), settings, provider=_provider(settings, fake))
+def _zoominfo_only(settings, fake, lead, company=None, repo=None):
+    repo = repo if repo is not None else RecordingRepo()
+    waterfall = EnrichmentWaterfall([ZoomInfoAdapter(settings, api=_provider(settings, fake))],
+                                    repo, settings)
+    result = waterfall.enrich_company(company or _company(), lead, "co-1")
+    return result, result.attempts[0], repo
 
 
-def test_an_unconfigured_provider_is_never_called(settings, make_job, now):
+def test_an_unconfigured_provider_is_never_called(settings):
     fake = FakeZoomInfo(companies=[ACME])
-    result = _stage(settings, fake).enrich_company(_fc(make_job, settings, now), Lead(), "co-1")
-    assert result.status == "NOT_CONFIGURED" and fake.requests == []
+    _, attempt, _ = _zoominfo_only(settings, fake, Lead())
+    assert (attempt["status"], attempt["reason"], attempt["called"]) == (
+        "PROVIDER_UNAVAILABLE", "NOT_CONFIGURED", False)
+    assert fake.requests == []
 
 
-def test_strong_public_data_is_not_re_enriched(zi_settings, make_job, now):
+def test_strong_public_data_is_not_re_enriched(zi_settings):
     zi_settings.contacts_target = 2
     lead = Lead(contacts=[_public("Jane Doe", "CEO", 1, "jane.doe@acme-mfg.com"),
                           _public("Carl Ortiz", "COO", 2, "carl@acme-mfg.com", "c-2")])
     fake = FakeZoomInfo(companies=[ACME])
-    result = _stage(zi_settings, fake).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
-    assert result.status == "SKIPPED_STRONG_PUBLIC_DATA" and fake.requests == []
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, lead)
+    assert (attempt["status"], attempt["reason"]) == ("NOT_CALLED", "NOTHING_MISSING")
+    assert fake.requests == []
 
 
-def test_a_company_on_another_domain_is_not_attached(zi_settings, make_job, now):
+def test_a_company_on_another_domain_is_not_attached(zi_settings):
     other = {**ACME, "id": 88, "website": "www.acme-holdings.com", "domainList": ["acme-holdings.com"]}
     fake = FakeZoomInfo(companies=[other], previews=[_preview(1, "Jane", "Doe", "CEO", company_id=88)])
     lead = Lead()
-    result = _stage(zi_settings, fake).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
-    assert result.status == "DOMAIN_MISMATCH"
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, lead)
+    assert (attempt["status"], attempt["reason"]) == ("PROVIDER_NO_MATCH", "DOMAIN_MISMATCH")
     assert "search/contact" not in fake.paths() and lead.contacts == []
 
 
-def test_an_ambiguous_name_match_is_not_attached(zi_settings, make_job, now):
-    fc = _fc(make_job, zi_settings, now, company_website=None)
+def test_an_ambiguous_name_match_is_not_attached(zi_settings):
     twins = [{**ACME, "id": 1, "website": None, "domainList": []},
              {**ACME, "id": 2, "website": None, "domainList": []}]
     fake = FakeZoomInfo(companies=twins)
-    result = _stage(zi_settings, fake).enrich_company(fc, Lead(domain=None), "co-1")
-    assert result.status == "AMBIGUOUS" and "search/contact" not in fake.paths()
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, Lead(domain=None), _company(domain=None))
+    assert (attempt["status"], attempt["reason"]) == ("PROVIDER_NO_MATCH", "AMBIGUOUS")
+    assert "search/contact" not in fake.paths()
 
 
-def test_a_single_same_name_same_state_company_matches_without_a_domain(zi_settings, make_job, now):
-    fc = _fc(make_job, zi_settings, now, company_website=None)
+def test_a_single_same_name_same_state_company_matches_without_a_domain(zi_settings):
     fake = FakeZoomInfo(companies=[{**ACME, "website": None, "domainList": []}],
                         previews=[_preview(1, "Jane", "Doe", "CEO", has_email=False)])
     lead = Lead(domain=None)
-    result = _stage(zi_settings, fake).enrich_company(fc, lead, "co-1")
-    assert (result.status, result.match_basis) == ("ENRICHED", "NAME_AND_STATE")
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, lead, _company(domain=None))
+    assert attempt["match_method"] == "NAME_AND_STATE"
     assert [(c["name"], c["origin"]) for c in lead.contacts] == [("Jane Doe", "ZOOMINFO")]
 
 
-def test_zoominfo_upgrades_a_weak_public_email_for_the_same_person(zi_settings, make_job, now):
+def test_zoominfo_upgrades_a_weak_public_email_for_the_same_person(zi_settings):
     public = _public("Fred A. McManus", "Chief Operating Officer", 2, "fred@randstadusa.com")
     lead = Lead(contacts=[public])
     fake = FakeZoomInfo(companies=[ACME],
                         previews=[_preview(5, "Fred", "McManus", "COO")],
                         people={5: _person(5, "Fred", "McManus", "COO", "fmcmanus@acme-mfg.com")})
-    repo = RecordingRepo()
-    result = _stage(zi_settings, fake, repo).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
+    _, attempt, repo = _zoominfo_only(zi_settings, fake, lead)
 
     [fred] = lead.contacts
-    assert result.contacts_upgraded == 1 and result.contacts_added == 0
+    assert attempt["contacts_upgraded"] == 1 and attempt["contacts_added"] == 0
     assert fred["email"] == "fmcmanus@acme-mfg.com"
     assert fred["title"] == "Chief Operating Officer", "the public title is kept"
     assert fred["origin"] == "PUBLIC+ZOOMINFO"
-    assert fred["replaced_emails"] == [{"email": "fred@randstadusa.com", "email_class": DOMAIN_MISMATCH}]
-    assert fred["field_provenance"]["email"]["source"] == "zoominfo"
-    assert fred["field_provenance"]["email"]["zoominfo_person_id"] == 5
+    [replaced] = fred["replaced_emails"]
+    assert (replaced["email"], replaced["email_class"], replaced["replaced_by"]) == (
+        "fred@randstadusa.com", DOMAIN_MISMATCH, "ZOOMINFO")
+    assert replaced["provenance"]["evidence_url"] == "https://acme-mfg.com/leadership"
+    assert fred["field_provenance"]["email"]["provider"] == "ZOOMINFO"
+    assert fred["field_provenance"]["email"]["person_id"] == 5
     assert repo.calls["contact_update"] == [("c-1", {"email": "fmcmanus@acme-mfg.com",
                                                      "profile_url": "https://www.linkedin.com/in/FredMcManus"})]
     assert {e["key"] for e in repo.calls["evidence"]} >= {
         "zoominfo_company_match", "zoominfo_email", "zoominfo_profile_url"}
 
 
-def test_a_personal_public_email_is_never_replaced_or_re_enriched(zi_settings, make_job, now):
+def test_a_personal_public_email_is_never_replaced_or_re_enriched(zi_settings):
     zi_settings.contacts_target = 3
     public = _public("Jane Doe", "CEO", 1, "jane.doe@acme-mfg.com")
     lead = Lead(contacts=[public])
@@ -298,7 +304,7 @@ def test_a_personal_public_email_is_never_replaced_or_re_enriched(zi_settings, m
                         previews=[_preview(1, "Jane", "Doe", "CEO"), _preview(2, "Carl", "Ortiz", "COO")],
                         people={1: _person(1, "Jane", "Doe", "CEO", "jdoe@acme-mfg.com"),
                                 2: _person(2, "Carl", "Ortiz", "COO", "cortiz@acme-mfg.com")})
-    _stage(zi_settings, fake).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
+    _zoominfo_only(zi_settings, fake, lead)
 
     enrich_body = next(b for p, b, _ in fake.requests if p == "enrich/contact")
     assert enrich_body["matchPersonInput"] == [{"personId": 2}], "Jane already has a PERSONAL email"
@@ -307,7 +313,7 @@ def test_a_personal_public_email_is_never_replaced_or_re_enriched(zi_settings, m
     assert [c["name"] for c in lead.contacts] == ["Jane Doe", "Carl Ortiz"]
 
 
-def test_new_contacts_are_poc_only_same_company_and_capped(zi_settings, make_job, now):
+def test_new_contacts_are_poc_only_same_company_and_capped(zi_settings):
     zi_settings.zoominfo_max_contact_enrich_per_company = 1
     fake = FakeZoomInfo(companies=[ACME], previews=[
         _preview(1, "Jane", "Doe", "CEO"),
@@ -316,7 +322,7 @@ def test_new_contacts_are_poc_only_same_company_and_capped(zi_settings, make_job
         _preview(4, "Ana", "Ruiz", "Plant Manager", company_id=999),  # another company
     ], people={1: _person(1, "Jane", "Doe", "CEO", "jane.doe@acme-mfg.com")})
     lead = Lead()
-    result = _stage(zi_settings, fake).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, lead)
 
     enrich_body = next(b for p, b, _ in fake.requests if p == "enrich/contact")
     assert enrich_body["matchPersonInput"] == [{"personId": 1}], "P1 before P2, one credit"
@@ -324,33 +330,34 @@ def test_new_contacts_are_poc_only_same_company_and_capped(zi_settings, make_job
         ("Jane Doe", 1, "jane.doe@acme-mfg.com", "ZOOMINFO"),
         ("Carl Ortiz", 2, None, "ZOOMINFO"),      # a free search preview, not enriched
     ]
-    assert result.contacts_added == 2 and result.credits == 2.0  # company + one contact
+    assert attempt["contacts_added"] == 2 and attempt["credits"] == 2.0  # company + one contact
 
 
-def test_a_public_contact_ranks_before_an_equal_zoominfo_contact(zi_settings, make_job, now):
+def test_a_public_contact_ranks_before_an_equal_zoominfo_contact(zi_settings):
     public = _public("Dana Reed", "President", 1, "dreed@acme-mfg.com")
     lead = Lead(contacts=[public])
     fake = FakeZoomInfo(companies=[ACME], previews=[_preview(9, "Omar", "Haddad", "CEO")],
                         people={9: _person(9, "Omar", "Haddad", "CEO", "ohaddad@acme-mfg.com")})
-    _stage(zi_settings, fake).enrich_company(_fc(make_job, zi_settings, now), lead, "co-1")
+    _zoominfo_only(zi_settings, fake, lead)
     assert [(c["name"], c["origin"]) for c in lead.contacts] == [
         ("Dana Reed", "PUBLIC"), ("Omar Haddad", "ZOOMINFO")]
 
 
-def test_every_call_is_logged_with_cost(zi_settings, make_job, now):
+def test_every_call_is_logged_with_cost(zi_settings):
     fake = FakeZoomInfo(companies=[ACME], previews=[_preview(1, "Jane", "Doe", "CEO")],
                         people={1: _person(1, "Jane", "Doe", "CEO", "jane.doe@acme-mfg.com")})
-    repo = RecordingRepo()
-    _stage(zi_settings, fake, repo).enrich_company(_fc(make_job, zi_settings, now), Lead(), "co-1")
+    _, _, repo = _zoominfo_only(zi_settings, fake, Lead())
     logs = repo.calls["enrichment_log"]
-    assert [(l["endpoint"].rsplit("/", 2)[-2:], l["credit_cost"], l["billable"]) for l in logs] == [
-        (["enrich", "company"], 1.0, True), (["search", "contact"], 0.0, True),
-        (["enrich", "contact"], 1.0, True)]
+    assert [(l["provider"], l["endpoint"].rsplit("/", 2)[-2:], l["credit_cost"], l["billable"])
+            for l in logs] == [
+        ("ZOOMINFO", ["enrich", "company"], 1.0, True), ("ZOOMINFO", ["search", "contact"], 0.0, True),
+        ("ZOOMINFO", ["enrich", "contact"], 1.0, True)]
+    assert all(l["result"]["at"] and l["result"]["attempt_status"] for l in logs)
     [new] = repo.calls["contact"]
     assert new["source_type"] == "ZOOMINFO" and new["raw_payload"]["origin"] == "ZOOMINFO"
 
 
-def test_recent_zoominfo_data_is_reused_without_calling(zi_settings, make_job, now):
+def test_recent_zoominfo_data_is_reused_without_calling(zi_settings):
     class Repo(RecordingRepo):
         configured = True
 
@@ -363,9 +370,10 @@ def test_recent_zoominfo_data_is_reused_without_calling(zi_settings, make_job, n
 
     fake = FakeZoomInfo(companies=[ACME])
     lead = Lead()
-    result = ZoomInfoEnrichment(Repo(), zi_settings, provider=_provider(zi_settings, fake)).enrich_company(
-        _fc(make_job, zi_settings, now), lead, "co-1")
-    assert result.status == "CACHED" and fake.requests == []
+    _, attempt, _ = _zoominfo_only(zi_settings, fake, lead, repo=Repo())
+    assert (attempt["status"], attempt["reason"], attempt["called"]) == (
+        "PROVIDER_SUCCESS", "CACHED", False)
+    assert fake.requests == []
     assert [c["name"] for c in lead.contacts] == ["Jane Doe"]
 
 
@@ -390,35 +398,36 @@ def test_zoominfo_runs_after_public_discovery_for_qualified_companies_only(
                      external_id="m-1")]
     runner = PipelineRunner(settings=zi_settings, repo=recording_repo,
                             access=StubAccess({}, settings=zi_settings),
-                            zoominfo=_provider(zi_settings, fake))
+                            enrichment_providers=[ZoomInfoAdapter(zi_settings, api=_provider(zi_settings, fake))])
     report = runner.run(raw_jobs=jobs, now=now)
 
     stages = list(report.stages)
-    assert stages.index("zoominfo_enrichment") == stages.index("contact_discovery") + 1
+    assert stages.index("enrichment") == stages.index("contact_discovery") + 1
     company_inputs = [b["matchCompanyInput"][0] for p, b, _ in fake.requests if p == "enrich/company"]
     assert company_inputs == [{"companyWebsite": "http://www.acme-mfg.com",
                                "companyName": "Acme Manufacturing"}], "NEEDS_REVIEW is never sent"
     [acme] = report.qualified
     [review] = report.needs_review
     assert review.enrichment == {}
-    assert acme.enrichment["ZOOMINFO"]["status"] == "ENRICHED"
+    assert acme.enrichment["attempts"][0]["status"] == "PROVIDER_SUCCESS"
+    assert acme.enrichment["providers_called"] == ["ZOOMINFO"]
     emails = {o["email"]: o for o in acme.observed_emails}
     assert emails["jane.doe@acme-mfg.com"]["email_class"] == PERSONAL
     assert emails["jane.doe@acme-mfg.com"]["source"] == "zoominfo"
     assert emails["jane.doe@acme-mfg.com"]["extraction_method"] == "zoominfo_enrich_contact"
     assert emails["apply@indeed.com"]["email_class"] == PORTAL_GENERATED, "preserved as evidence"
     assert acme.emails == ["jane.doe@acme-mfg.com"]
-    assert report.zoominfo_enrichment["statuses"] == {"ENRICHED": 1}
+    assert report.enrichment["statuses"] == {"ZOOMINFO": {"PROVIDER_SUCCESS": 1}}
 
 
 def test_stop_at_before_enrichment_runs_public_discovery_only(zi_settings, recording_repo, make_job, now):
     fake = FakeZoomInfo(companies=[ACME])
     runner = PipelineRunner(settings=zi_settings, repo=recording_repo,
                             access=StubAccess({}, settings=zi_settings),
-                            zoominfo=_provider(zi_settings, fake))
+                            enrichment_providers=[ZoomInfoAdapter(zi_settings, api=_provider(zi_settings, fake))])
     report = runner.run(raw_jobs=[make_job(company="Acme Manufacturing", employees="51 to 200",
                                            industry="Manufacturing",
                                            company_website="https://acme-mfg.com")],
                         now=now, stop_at="before_enrichment")
-    assert "contact_discovery" in report.stages and "zoominfo_enrichment" not in report.stages
+    assert "contact_discovery" in report.stages and "enrichment" not in report.stages
     assert fake.requests == []

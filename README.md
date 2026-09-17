@@ -28,8 +28,9 @@ USER (Sector + Job)
   -> Qualification engine ............ nexbase/pipeline/qualification.py, profile.py
   -> Free / public contact discovery . nexbase/contacts/discovery.py, extraction.py,
                                        nexbase/email/discovery.py
-  -> ZoomInfo ....................... nexbase/enrichment/zoominfo.py, zoominfo_stage.py
-  -> Apollo -> Apify ................ nexbase/enrichment/apollo.py (not wired)
+  -> Enrichment waterfall ........... nexbase/enrichment/waterfall.py
+     ZoomInfo (primary) ............. zoominfo.py, zoominfo_stage.py
+     Apollo, Apify (fallback only) .. apollo.py, apify.py
   -> POC ranking ..................... nexbase/contacts/ranking.py
   -> Email verification .............. nexbase/email/verification.py (not wired)
   -> Final lead + export ............. nexbase/pipeline/runner.py, nexbase/export.py,
@@ -57,14 +58,15 @@ Shared infrastructure:
 | 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | **done** |
 | 6 | Free/public contact discovery | **done** |
-| 7 | ZoomInfo enrichment | **done** (fixture-tested; no live account) |
+| 7 | Enrichment: ZoomInfo primary, Apollo / Apify fallback | **done** (fixture-tested; no live accounts; no Apify actor confirmed) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
 The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
 company identification -> qualify -> resolve domains -> persist -> free / public contact
-discovery + email classification + POC ranking -> ZoomInfo enrichment (both QUALIFIED
-companies only). Apollo, Apify enrichment and email verification are **not called**.
+discovery + email classification + POC ranking -> enrichment waterfall (ZoomInfo primary,
+Apollo / Apify fallback; both stages QUALIFIED companies only). Email verification is
+**not called**.
 
 ## Planner and source registry
 
@@ -257,34 +259,68 @@ Provenance: each contact row keeps its stage, source type, page URL and
 extraction method, plus a `CONTACT` evidence row; each address is a
 `company_email` evidence row whose `email_type` is its class.
 
-## ZoomInfo enrichment
+## Enrichment waterfall
 
-Runs after public contact discovery, QUALIFIED companies only, strongest hiring
-first, up to `ZOOMINFO_MAX_COMPANIES_PER_RUN`. Built on ZoomInfo's documented
-Enterprise API (`/authenticate`, `/enrich/company`, `/search/contact`,
-`/enrich/contact`); that API is marked as being deprecated by ZoomInfo, and no
-live account has exercised this code. `ZOOMINFO_API_KEY` is `username:password`
-or a pre-issued JWT.
+Runs after public contact discovery and email classification, QUALIFIED companies
+only, strongest hiring first. **ZoomInfo is the primary provider. Apollo and
+Apify are fallbacks**, called only when the provider before them could not supply
+what was required - never because they might return more.
 
-1. **Nothing missing, nothing spent**: skipped when the company already has
-   `CONTACTS_TARGET` named POC contacts with a PERSONAL email, or when ZoomInfo was
-   consulted within `ZOOMINFO_REFRESH_DAYS` (stored ZoomInfo contacts are reused).
-2. **Company match**: with a known domain only a ZoomInfo company on that domain;
-   without one only a single same-name company in the same state. Otherwise
-   `DOMAIN_MISMATCH`, `AMBIGUOUS` or `NO_MATCH`, and nothing is attached. ZoomInfo
-   company facts are stored as evidence; identity and qualification are untouched.
-3. **Contacts**: Contact Search for the POC titles (no emails, no credits), then
-   Contact Enrich (one credit each) for at most
-   `ZOOMINFO_MAX_CONTACT_ENRICH_PER_COMPANY` POC candidates, strongest first, whose
-   email would fill a gap. Previews not enriched still add a named POC.
-4. **Merge**: the same person (same email, ZoomInfo id, or first + last name) is
-   one contact. ZoomInfo fills missing fields and upgrades a weaker email (the
-   replaced one is kept in `replaced_emails`); a PERSONAL public email is never
-   replaced. Ordering: POC tier, email strength, public before ZoomInfo.
-5. **Provenance**: `origin` is `PUBLIC`, `ZOOMINFO` or `PUBLIC+ZOOMINFO`; every
-   ZoomInfo field is in `field_provenance` and a `zoominfo_<field>` evidence row;
-   every API call is an `enrichment_logs` row with endpoint, status and credit
-   cost (records returned: search is free, "no match" and errors charge nothing).
+| When | Next provider | Asked for |
+|---|---|---|
+| Company has `CONTACTS_TARGET` named POC contacts with a PERSONAL company-domain email | none (not even ZoomInfo) | - |
+| Otherwise | ZoomInfo | POC contacts; emails for POCs that lack a PERSONAL one |
+| Previous provider `PROVIDER_SUCCESS` | none | - |
+| Previous provider `PROVIDER_PARTIAL` (a POC it supplied or was asked about still has no PERSONAL email) | next | those people's emails only |
+| Previous provider failed and the company is still below target | next | the whole task |
+
+Failures are named, never lumped together: `PROVIDER_NO_MATCH` (company or
+person not found, or identity not resolved: `NO_MATCH`, `AMBIGUOUS`,
+`DOMAIN_MISMATCH`, `IDENTITY_UNRESOLVED`, `NO_DOMAIN_FOR_IDENTITY`),
+`PROVIDER_ERROR`, `PROVIDER_TIMEOUT`, `PROVIDER_RATE_LIMITED` (HTTP 429),
+`PROVIDER_UNAVAILABLE` (not configured, 401/403, no confirmed actor, company budget
+spent, or disabled for the run).
+
+**Quality beats provider order.** An email replaces another only when its class
+is strictly stronger (PERSONAL > ROLE > DOMAIN_MISMATCH > EXTERNAL_UNVERIFIED >
+PORTAL_GENERATED); on a tie the earlier source keeps it (public evidence, then
+ZoomInfo, Apollo, Apify). A replaced email stays in `replaced_emails` with its
+class, provenance and what replaced it; every provider email is also kept as
+classified evidence.
+
+**Identity.**
+- ZoomInfo: a company on the known domain, or without one a single same-name
+  company in the same state; contacts must belong to that ZoomInfo company.
+- Apollo: never without a domain; a person is attached only when Apollo's
+  `organization.primary_domain` is the company's domain, and a name lookup must
+  return the same person.
+- Apify: only people the actor ties to the company's domain.
+
+**Cost control.** Per provider: companies per run (`ZOOMINFO_/APOLLO_/
+APIFY_ENRICHMENT_MAX_COMPANIES_PER_RUN`), paid person lookups per company, reuse of
+stored results within `ZOOMINFO_/APOLLO_REFRESH_DAYS`. Transport errors and
+timeouts retry at most three times; a provider that is rate limited or refuses
+credentials is not called again in the run. Free searches (ZoomInfo Contact
+Search, Apollo People API Search) come before paid lookups, which skip people who
+already have a PERSONAL email.
+
+**Provenance.** `lead.enrichment.attempts` lists every provider: called or not,
+status, reason, `fallback_reason` ("why did we call Apollo?"), match method,
+provider company and person ids, fields supplied, requests, billable, credits,
+timestamp. Each contact carries `origin` (e.g. `PUBLIC+ZOOMINFO+APOLLO`) and a
+`field_provenance` entry per supplied field; each call is an `enrichment_logs` row;
+each supplied field and company match is an evidence row.
+
+**Providers** (documented APIs only; no live account has exercised any of them):
+- ZoomInfo Enterprise API (`/authenticate`, `/enrich/company`, `/search/contact`,
+  `/enrich/contact`), marked by ZoomInfo as being deprecated. `ZOOMINFO_API_KEY` is
+  `username:password` or a pre-issued JWT.
+- Apollo (`GET /organizations/enrich`, `POST /mixed_people/api_search`,
+  `POST /people/match`), `x-api-key`.
+- Apify: runs a registered contact-enrichment actor through the Apify run API.
+  **No actor is registered** until one is chosen and its schema reviewed, so Apify
+  reports `PROVIDER_UNAVAILABLE: NO_CONFIRMED_ACTOR`. Its recorded cost is the
+  per-run USD cap.
 
 `--stop-at before_enrichment` runs public discovery only.
 

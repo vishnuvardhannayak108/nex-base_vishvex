@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     zoominfo_max_contact_enrich_per_company: int = 3
     #: A company consulted within this many days reuses its stored ZoomInfo contacts.
     zoominfo_refresh_days: int = 90
+    #: Apollo is a FALLBACK: consulted only when ZoomInfo could not supply what
+    #: was required. QUALIFIED companies per run, People Enrichment lookups per
+    #: company, and the window in which its stored contacts are reused.
+    apollo_max_companies_per_run: int = 25
+    apollo_max_person_lookups_per_company: int = 3
+    apollo_refresh_days: int = 90
     apollo_api_key: str = ""
     apollo_api_url: str = "https://api.apollo.io/api/v1"
     zerobounce_api_key: str = ""
@@ -161,6 +167,11 @@ class Settings(BaseSettings):
     apify_max_items_per_query: int = 100
     apify_max_charge_usd_per_call: float = 1.0
     apify_timeout_seconds: int = 300
+    #: Apify contact enrichment is the LAST fallback. The actor id must be one
+    #: registered in enrichment/apify.py after its schema is reviewed; none is yet.
+    apify_enrichment_actor: str = ""
+    apify_enrichment_max_companies_per_run: int = 5
+    apify_enrichment_max_items: int = 10
 
     # ------------------------------------------------------------------
     # Discovery source adapters

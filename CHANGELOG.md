@@ -8,6 +8,59 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Fallback enrichment architecture (2026-09-17)
+
+Tests: 887 before, **919 passed** after (0 failed); 32 new in
+`tests/test_enrichment_waterfall.py`, ZoomInfo stage tests ported in
+`tests/test_zoominfo.py`.
+
+### API evidence
+
+Apollo, read from its published OpenAPI definitions (docs.apollo.io, 2026-09-17):
+`GET /organizations/enrich` (1 credit); `POST /mixed_people/api_search` (0 credits,
+query parameters, no emails, `last_name_obfuscated`, domain filter includes previous
+employers); `POST /people/match` (charged only when data is found; returns
+`email`, `email_status`, `organization{id, primary_domain, website_url}`); auth
+`x-api-key`; errors 401, 403, 422, 429. No Apollo or Apify credentials: nothing has
+run against a live account.
+
+### Added / changed
+
+- `enrichment/base.py`: `PROVIDER_SUCCESS / _PARTIAL / _NO_MATCH / _ERROR / _TIMEOUT /
+  _RATE_LIMITED / _UNAVAILABLE`, `failure_status` (timeout, 429, 401/403, other),
+  `ProviderCall` (with timestamp), `CompanyContext`, `EnrichmentNeed`,
+  `ProviderContact`, `ProviderOutcome`, `FallbackProvider`.
+- `enrichment/waterfall.py`: orchestration (primary rule, fallback rules, fallback
+  reasons), quality-ranked merge with preserved replaced emails, per-provider
+  company budgets, run-level disable after rate limit / refused credentials,
+  per-provider cache, enrichment logs, evidence, persistence.
+- `enrichment/zoominfo_stage.py`: `ZoomInfoAdapter` (Phase 7 matching and
+  gap-only enrichment, now returning a classified outcome and able to look up only
+  named people).
+- `enrichment/apollo.py`: provider rewritten to the documented endpoints;
+  `ApolloAdapter` (domain-only identity, organization-domain check, name check,
+  lookup cap, stop on refusal).
+- `enrichment/apify.py`: `ApifyAdapter` over the existing `run_actor` client with
+  an empty `APIFY_ENRICHMENT_ACTORS` registry.
+- `enrichment/zoominfo.py`: calls classified with `failure_status`.
+- Runner stage 9 is `enrichment` (was `zoominfo_enrichment`); `PipelineRunner(
+  enrichment_providers=...)` (was `zoominfo=`); `lead.enrichment` is the attempt
+  list; `report.enrichment` counts statuses and credits per provider.
+- Settings: `APOLLO_MAX_COMPANIES_PER_RUN` (25), `APOLLO_MAX_PERSON_LOOKUPS_PER_COMPANY`
+  (3), `APOLLO_REFRESH_DAYS` (90), `APIFY_ENRICHMENT_ACTOR` (empty),
+  `APIFY_ENRICHMENT_MAX_COMPANIES_PER_RUN` (5), `APIFY_ENRICHMENT_MAX_ITEMS` (10).
+
+### Removed / replaced
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `ZoomInfoEnrichment`, `CompanyEnrichment`, its merge / persist / cache | `runner._enrich_with_zoominfo` | `test_zoominfo.py` stage tests (ported) | Generalized into `EnrichmentWaterfall` + `ZoomInfoAdapter`; statuses `ENRICHED` / `DOMAIN_MISMATCH` / `SKIPPED_*` become `PROVIDER_*` with a reason |
+| `zoominfo.ApiCall` | `ZoomInfoProvider` | none | Replaced by the shared `base.ProviderCall`, whose failures are classified |
+| Apollo `POST /organizations/enrich` with a JSON body | `ApolloProvider.enrich` | `test_enrichment_providers.py` (unconfigured path, passes) | Documented as `GET` with query parameters |
+| Apollo `POST /mixed_people/search` reading `email`; seniority list | `ApolloProvider._search_people` | none | The documented People API Search is `/mixed_people/api_search` and returns no emails; emails come from `/people/match` |
+| `runner._enrich_with_zoominfo`, stage `zoominfo_enrichment`, `report.zoominfo_enrichment`, `PipelineRunner(zoominfo=)` | runner | `test_zoominfo.py`, `test_pipeline_e2e.py` | Replaced by the waterfall stage |
+| `test_runner_calls_no_later_phase_provider_and_sends_nothing` | - | itself | Apollo is now wired as a fallback; replaced by a guard for verification and outreach |
+
 ## Phase 7 — ZoomInfo enrichment (2026-09-17)
 
 Tests: 857 before, **887 passed** after (0 failed); 30 new in `tests/test_zoominfo.py`.

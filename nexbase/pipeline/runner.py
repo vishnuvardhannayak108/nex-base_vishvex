@@ -12,7 +12,8 @@ Single entry point used by the API, the CLI and tests:
     7 Persist every company, its jobs and its qualification reasons
     8 Free / public contact discovery + email classification + POC ranking,
       QUALIFIED companies only
-    9 ZoomInfo enrichment, QUALIFIED companies only
+    9 Enrichment waterfall, QUALIFIED companies only: ZoomInfo PRIMARY, Apollo
+      and Apify FALLBACK only when ZoomInfo could not supply what was required
 
 Apollo, Apify and email verification are not executed here. Nothing here sends
 email.
@@ -40,8 +41,11 @@ from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
 from nexbase.discovery.planner import DiscoveryPlan
 from nexbase.discovery.registry import SourceRegistry, build_registry
 from nexbase.email.discovery import EmailDiscovery
-from nexbase.enrichment.zoominfo import ZoomInfoProvider
-from nexbase.enrichment.zoominfo_stage import CompanyEnrichment, ZoomInfoEnrichment
+from nexbase.enrichment.apify import ApifyAdapter
+from nexbase.enrichment.apollo import ApolloAdapter
+from nexbase.enrichment.base import CompanyContext, FallbackProvider
+from nexbase.enrichment.waterfall import EnrichmentWaterfall
+from nexbase.enrichment.zoominfo_stage import ZoomInfoAdapter
 from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
 from nexbase.pipeline.company_identity import CompanyIdentifier, FreshCompany
 from nexbase.pipeline.dedupe import JobDeduplicator
@@ -125,8 +129,8 @@ class QualifiedLead:
     #: NOT_RUN | COMPLETED | PAGE_BUDGET_EXHAUSTED | SKIPPED_COMPANY_BUDGET |
     #: FAILED. Only QUALIFIED companies are ever searched.
     contact_discovery: str = "NOT_RUN"
-    #: Provider -> what enrichment did for this lead (status, match basis,
-    #: credits, contacts added / upgraded).
+    #: The enrichment waterfall for this lead: every provider attempt (called or
+    #: not, status, fallback reason, match method, fields supplied, credits).
     enrichment: dict = field(default_factory=dict)
     rejection_reasons: list[str] = field(default_factory=list)
     evidence_url: str | None = None
@@ -160,7 +164,8 @@ class PipelineReport:
     size_resolution: dict = field(default_factory=dict)
     domain_resolution: dict = field(default_factory=dict)
     contact_discovery: dict = field(default_factory=dict)
-    zoominfo_enrichment: dict = field(default_factory=dict)
+    #: Provider -> attempt status counts, and credits spent per provider.
+    enrichment: dict = field(default_factory=dict)
     #: Per-source outcome, so an empty or broken source stays visible
     #: instead of being folded into a single total.
     source_status: dict = field(default_factory=dict)
@@ -194,7 +199,7 @@ class PipelineReport:
             "size_resolution": self.size_resolution,
             "domain_resolution": self.domain_resolution,
             "contact_discovery": self.contact_discovery,
-            "zoominfo_enrichment": self.zoominfo_enrichment,
+            "enrichment": self.enrichment,
             "source_status": self.source_status,
             "coverage": self.coverage,
             "qualified_leads": [asdict(lead) for lead in self.qualified],
@@ -223,10 +228,11 @@ class PipelineRunner:
         size_resolver: SizeResolver | None = None,
         domain_resolver=None,
         registry: SourceRegistry | None = None,
-        zoominfo: ZoomInfoProvider | None = None,
+        enrichment_providers: list[FallbackProvider] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self._zoominfo = zoominfo
+        #: Priority order, primary first. Default: ZoomInfo, Apollo, Apify.
+        self._enrichment_providers = enrichment_providers
         ensure_logging_configured(self.settings.log_level)
         self.log = logger or get_logger("nexbase.pipeline.runner")
         self.repo = repo if repo is not None else SupabaseRepository(settings=self.settings)
@@ -416,10 +422,10 @@ class PipelineRunner:
             with stage(self.log, "contact_discovery", report.stages):
                 self._discover_contacts(qualified, report)
 
-            # --- 9. ZoomInfo enrichment: QUALIFIED only, after public discovery
+            # --- 9. Enrichment waterfall: QUALIFIED only, after public discovery
             if stop_at != "before_enrichment":
-                with stage(self.log, "zoominfo_enrichment", report.stages):
-                    self._enrich_with_zoominfo(qualified, report)
+                with stage(self.log, "enrichment", report.stages):
+                    self._enrich(qualified, report)
 
         # --- Reporting ------------------------------------------------------
         report.access = {
@@ -989,45 +995,50 @@ class PipelineRunner:
         self.log.info("contact_discovery_complete", **stats)
 
     # ------------------------------------------------------------------
-    # ZoomInfo enrichment (QUALIFIED companies only, after public discovery)
+    # Enrichment waterfall (QUALIFIED companies only, after public discovery)
     # ------------------------------------------------------------------
-    def _enrich_with_zoominfo(self, qualified, report) -> None:
-        """Consult ZoomInfo for QUALIFIED companies, strongest hiring first.
+    def _enrich(self, qualified, report) -> None:
+        """ZoomInfo first; Apollo and Apify only as fallbacks. Strongest hiring first.
 
-        At most ``ZOOMINFO_MAX_COMPANIES_PER_RUN`` companies; the rest are
-        SKIPPED_COMPANY_BUDGET. Unconfigured, nothing is called or billed.
+        See ``nexbase/enrichment/waterfall.py`` for when a fallback is called.
+        Unconfigured providers are recorded as PROVIDER_UNAVAILABLE and never billed.
         """
-        provider = self._zoominfo or ZoomInfoProvider(self.settings, self.log)
-        enrichment = ZoomInfoEnrichment(self.repo, self.settings, self.log, provider=provider)
-        statuses: dict[str, int] = {}
-        stats = {"qualified": len(qualified), "credits": 0.0, "contacts_added": 0,
-                 "contacts_upgraded": 0,
-                 "company_budget": self.settings.zoominfo_max_companies_per_run}
-        for index, (fc, lead, company_id) in enumerate(sorted(qualified, key=_hiring_strength)):
-            if index >= self.settings.zoominfo_max_companies_per_run:
-                result = CompanyEnrichment("SKIPPED_COMPANY_BUDGET")
-            else:
-                try:
-                    result = enrichment.enrich_company(fc, lead, company_id)
-                except Exception as exc:
-                    report.append_pitfall(stage="ZOOMINFO", company=lead.company_name,
-                                          reason=str(exc))
-                    result = CompanyEnrichment("FAILED")
-            lead.enrichment["ZOOMINFO"] = result.as_dict()
-            statuses[result.status] = statuses.get(result.status, 0) + 1
-            stats["credits"] += result.credits
-            stats["contacts_added"] += result.contacts_added
-            stats["contacts_upgraded"] += result.contacts_upgraded
-            if result.zoominfo_emails or result.contacts_added or result.contacts_upgraded:
-                self._reclassify_emails(lead, company_id, result.zoominfo_emails)
-        report.zoominfo_enrichment = {**stats, "statuses": statuses}
-        self.log.info("zoominfo_enrichment_complete", **stats, statuses=statuses)
+        providers = self._enrichment_providers or [
+            ZoomInfoAdapter(self.settings, logger=self.log),
+            ApolloAdapter(self.settings, logger=self.log),
+            ApifyAdapter(self.settings),
+        ]
+        waterfall = EnrichmentWaterfall(providers, self.repo, self.settings, self.log)
+        statuses: dict[str, dict[str, int]] = {p.name: {} for p in providers}
+        credits: dict[str, float] = {p.name: 0.0 for p in providers}
+        for fc, lead, company_id in sorted(qualified, key=_hiring_strength):
+            company = CompanyContext(
+                name=lead.display_name or lead.company_name,
+                name_normalized=fc.company.company_name_normalized,
+                domain=lead.domain or None, states=frozenset(fc.company.states))
+            try:
+                result = waterfall.enrich_company(company, lead, company_id)
+            except Exception as exc:
+                report.append_pitfall(stage="ENRICHMENT", company=lead.company_name,
+                                      reason=str(exc))
+                continue
+            lead.enrichment = result.as_dict()
+            for attempt in result.attempts:
+                counts = statuses[attempt["provider"]]
+                counts[attempt["status"]] = counts.get(attempt["status"], 0) + 1
+                credits[attempt["provider"]] += attempt.get("credits") or 0.0
+            if result.provider_emails or any(
+                    a.get("contacts_added") or a.get("contacts_upgraded") for a in result.attempts):
+                self._reclassify_emails(lead, company_id, result.provider_emails)
+        report.enrichment = {"qualified": len(qualified), "statuses": statuses,
+                             "credits": credits}
+        self.log.info("enrichment_complete", statuses=statuses, credits=credits)
 
-    def _reclassify_emails(self, lead, company_id, zoominfo_emails) -> None:
+    def _reclassify_emails(self, lead, company_id, provider_emails) -> None:
         """Classify again with the enriched contacts; persist only new addresses."""
         seen = {o["email"] for o in lead.observed_emails}
         emails = EmailDiscovery(self.log).discover(
-            lead.contacts, extra_emails=list(lead.observed_emails) + list(zoominfo_emails),
+            lead.contacts, extra_emails=list(lead.observed_emails) + list(provider_emails),
             company_domain=lead.domain or None)
         self._persist_emails(company_id, [o for o in emails.observed if o.email not in seen])
         lead.emails = emails.preferred

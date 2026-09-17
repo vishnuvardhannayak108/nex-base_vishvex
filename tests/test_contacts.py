@@ -390,3 +390,190 @@ def test_sitemap_lookups_cannot_overrun_the_page_budget(settings):
 
     assert report.pages_fetched == 2 and len(access.requested) == 1
     assert report.budget_exhausted is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 6.1: plain-text name/title pairs on employer-site people pages
+# ---------------------------------------------------------------------------
+def _pairs(html, plain_text=True):
+    return [(c.name, c.title, c.title_priority)
+            for c in extract_contacts_from_html(html, base_url="https://acme.com/leadership",
+                                                plain_text=plain_text)]
+
+
+LEADERSHIP_TEXT = """<html><head><title>Leadership Team | Acme</title></head><body>
+<nav><a href="/">Home</a> Our Leadership</nav>
+<h1>Our Leadership</h1>
+<div><h3>Andy Dupuy</h3><p>Chief Executive Officer &amp; President</p></div>
+<div><h3>Fred A. McManus</h3><p>Chief Operating Officer</p></div>
+<div><h3>Mike Firmin</h3><p>President of Maintenance</p></div>
+<p>Dana Reed \u2014 CEO &amp; President</p>
+<p>Carl Ortiz, COO</p>
+<p>Jane Smith<br>HR Director</p>
+<p>Omar Haddad | Plant Manager</p>
+<footer>Owner: Acme Holdings</footer>
+</body></html>"""
+
+
+def test_plain_text_pairs_in_the_supported_formats():
+    assert _pairs(LEADERSHIP_TEXT) == [
+        ("Andy Dupuy", "Chief Executive Officer & President", 1),
+        ("Fred A. McManus", "Chief Operating Officer", 2),
+        ("Dana Reed", "CEO & President", 1),
+        ("Carl Ortiz", "COO", 2),
+        ("Jane Smith", "HR Director", 3),
+        ("Omar Haddad", "Plant Manager", 4),
+    ]
+
+
+def test_plain_text_is_read_only_when_the_caller_allows_it():
+    """Job descriptions, directories and generic pages never set plain_text."""
+    assert _pairs(LEADERSHIP_TEXT, plain_text=False) == []
+
+
+def test_a_plain_text_contact_keeps_its_page_and_method():
+    [candidate] = [c for c in extract_contacts_from_html(
+        "<html><title>Team</title><body><p>Carl Ortiz, COO</p></body></html>",
+        base_url="https://acme.com/our-team", discovery_stage="PUBLIC_WEB",
+        source_type="COMPANY_WEBSITE", source_priority=3, plain_text=True)]
+    assert candidate.url == candidate.raw["page_url"] == "https://acme.com/our-team"
+    assert candidate.raw["extraction"] == "text"
+    assert (candidate.discovery_stage, candidate.source_type) == ("PUBLIC_WEB", "COMPANY_WEBSITE")
+
+
+@pytest.mark.parametrize("title", [
+    "President of Maintenance", "Division President", "Regional President",
+    "Group President", "President for North America", "President of Construction",
+])
+def test_division_presidents_are_not_p1(title):
+    assert infer_priority(title) is None
+
+
+@pytest.mark.parametrize("title,tier", [
+    ("President", 1), ("CEO & President", 1), ("Owner & President", 1),
+    ("President and COO", 1), ("CEO and President of Construction", 1),
+])
+def test_the_company_president_is_still_p1(title, tier):
+    assert infer_priority(title) == tier
+
+
+# Adversarial pages: every one mentions owner / president / HR / CEO in text
+# that is not a person's name and title.
+CLOUDFLARE_409 = """<html><head><title>DNS resolution error | www.acme.com | Cloudflare</title></head>
+<body><h1>Error 1016</h1><p>Most likely:</p>
+<p>if the owner just signed up for Cloudflare it can take a few minutes</p>
+<p>What can I do?</p><p>If you are the owner of this website</p><p>Ray ID: 8c1d</p></body></html>"""
+
+SOFT_404_WITHOUT_ERROR_TITLE = """<html><head><title>Acme Leadership</title></head><body>
+<h2>Oops</h2><p>The page you were looking for, Our Owner, has moved.</p>
+<p>Contact the Site Owner</p><p>President</p>
+<p>Jane Smith is the HR Director of our sister company.</p>
+<p>If you are the President, please log in.</p>
+<p>HR</p><p>Human Resources</p></body></html>"""
+
+JOB_AD_TEXT = """<html><head><title>About the role</title></head><body>
+<p>Reports To: Plant Manager</p><p>Hiring Manager: Operations Manager</p>
+<p>Department, HR Manager</p><p>Location: Toledo, Ohio</p>
+<p>Great Benefits</p><p>General Manager</p><p>Apply Now</p><p>Owner</p></body></html>"""
+
+HEADINGS_AND_ORGS = """<html><head><title>About Acme</title></head><body>
+<div><h2>Meet The Team</h2><p>President</p></div><div><h3>Our Leadership</h3><p>Owner</p></div>
+<div><h3>Brown Construction Services</h3><p>General Manager</p></div>
+<p>Acme Holdings LLC, Owner</p><div><h3>Board Of Directors</h3><p>CEO</p></div>
+<div><h3>President Of Maintenance</h3><p>Chief Executive Officer</p></div></body></html>"""
+# Known limit: "<strong>Great Benefits</strong> <em>General Manager</em>" on a people
+# page is structurally a person card; telling it apart would need a name dictionary.
+
+LOOSE_PARAGRAPHS = """<html><head><title>About Acme</title></head><body>
+<p>Great Benefits</p><p>General Manager</p><p>Jane Smith</p><p>HR Director</p></body></html>"""
+
+
+@pytest.mark.parametrize("html", [CLOUDFLARE_409, SOFT_404_WITHOUT_ERROR_TITLE, JOB_AD_TEXT,
+                                  HEADINGS_AND_ORGS, LOOSE_PARAGRAPHS])
+def test_error_job_and_heading_text_never_becomes_a_contact(html):
+    assert _pairs(html) == []
+
+
+@pytest.mark.parametrize("page_title", [
+    "Page Not Found | Acme", "404", "Access denied", "Just a moment...", "Attention Required! | Cloudflare",
+])
+def test_a_page_titled_as_an_error_is_not_read_even_with_a_clean_pair(page_title):
+    html = f"<html><head><title>{page_title}</title></head><body><p>Carl Ortiz, COO</p></body></html>"
+    assert _pairs(html) == []
+
+
+@pytest.mark.parametrize("url,people", [
+    ("https://acme.com/leadership", True), ("https://acme.com/about-us/", True),
+    ("https://acme.com/our-team", True), ("https://acme.com/who-we-are", True),
+    ("https://acme.com/company/management", True), ("https://acme.com/about/leadership", True),
+    ("https://acme.com/", False), ("https://acme.com", False), ("https://acme.com/contact", False),
+    ("https://acme.com/post/team-shoutout-city-awards", False),
+    ("https://acme.com/blog/meet-the-team", False), ("https://acme.com/careers/about-the-role", False),
+    ("https://acme.com/page-sitemap.xml", False), ("https://acme.com/services/steam-cleaning", False),
+])
+def test_people_page_classification(url, people):
+    from nexbase.contacts.discovery import is_people_page
+
+    assert is_people_page(url) is people
+
+
+def test_text_pairs_are_read_only_on_employer_people_pages(settings):
+    """Same text on a job page, a board profile, a blog post and the homepage: no contacts."""
+    from nexbase.contacts.discovery import ContactDiscovery
+    from tests.test_pipeline_e2e import StubAccess
+
+    settings.contacts_scan_subdomains = False
+    page = "<html><title>Acme</title><body><p>Carl Ortiz, COO</p></body></html>"
+    access = StubAccess({
+        "indeed.com/viewjob": page, "indeed.com/cmp/Acme": page,
+        "acme.com/post/team-news": page, "acme.com/leadership": page,
+    }, settings=settings)
+    discovery = ContactDiscovery(access=access, settings=settings)
+    discovery._host_is_live = lambda base: True
+    discovery._links_from_homepage = lambda base, report, name: [
+        "https://acme.com/post/team-news", "https://acme.com/leadership"]
+    report = discovery.discover(
+        "Acme", "https://acme.com", ["https://www.indeed.com/viewjob?jk=1"],
+        ["https://www.indeed.com/cmp/Acme"])
+
+    assert {c.name for c in report.candidates} == {"Carl Ortiz"}
+    assert all(c.url.startswith("https://acme.com/") and "/post/" not in c.url
+               and c.discovery_stage == "PUBLIC_WEB" for c in report.candidates)
+
+
+def test_equivalent_urls_cost_one_fetch():
+    from nexbase.contacts.discovery import ContactDiscoveryReport
+
+    report = ContactDiscoveryReport(candidates=[])
+    assert report.first_visit("https://www.acme.com/Leadership/")
+    for same in ("http://acme.com/leadership", "https://ACME.com/leadership", "https://acme.com/leadership/"):
+        assert report.first_visit(same) is False, same
+    assert report.first_visit("https://acme.com/leadership?page=2")
+
+
+def test_the_live_brown_and_root_card_markup_is_read():
+    """Markup as served by brownandroot.com/leadership/ on 2026-09-17."""
+    html = """<html><head><title>Leadership Team | Brown and Root</title></head><body>
+    <a class="content-block type-team" href="/team/andy-dupuy/">
+      <h2 class="entry-title h5">Andy Dupuy</h2>
+      <p class="title-position">Chief Executive Officer &amp; President</p></a>
+    <a class="content-block type-team" href="/team/fred-mcmanus/">
+      <h2 class="entry-title h5">Fred A. McManus</h2>
+      <p class="title-position">Chief Operating Officer</p></a>
+    <a class="content-block type-team" href="/team/mike-firmin/">
+      <h2 class="entry-title h5">Mike Firmin</h2>
+      <p class="title-position">President of Maintenance</p></a></body></html>"""
+    assert _pairs(html) == [("Andy Dupuy", "Chief Executive Officer & President", 1),
+                            ("Fred A. McManus", "Chief Operating Officer", 2)]
+
+
+def test_cards_nested_inside_an_unclosed_site_header_are_read():
+    """brownandroot.com leaves <header class="site-header"> open around the whole page."""
+    html = """<html><head><title>Leadership Team | Brown and Root</title></head><body>
+    <header class="site-header"><nav><a href="/">Home</a><a href="/leadership/">Leadership</a></nav>
+    <div class="team-page"><article class="team">
+      <a class="content-block type-team" href="/leadership/andy-dupuy/">
+        <h2 class="entry-title h5">Andy Dupuy</h2>
+        <p class="title-position">Chief Executive Officer &amp; President</p></a>
+    </article></div></body></html>"""
+    assert _pairs(html) == [("Andy Dupuy", "Chief Executive Officer & President", 1)]

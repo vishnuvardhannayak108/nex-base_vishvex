@@ -16,6 +16,7 @@ evidence trail claim a first-party source for a third-party page.
 """
 from __future__ import annotations
 
+import re
 import time
 
 from dataclasses import dataclass, field
@@ -61,6 +62,38 @@ CONTACT_PATH_TOKENS = (
     "staff", "about-us", "who-we-are", "executive", "directory",
 )
 
+#: Path words of a team / leadership / about / management page, the only pages
+#: whose plain text may be read for name/title pairs.
+PEOPLE_PAGE_WORDS = frozenset({
+    "team", "leadership", "about", "management", "executive", "executives",
+    "people", "staff",
+})
+
+#: Path segments of pages that are not people pages even when a people word
+#: appears ("/post/team-shoutout-...", "/careers/about-the-role").
+NON_PEOPLE_SEGMENTS = frozenset({
+    "blog", "blogs", "post", "posts", "news", "article", "articles", "press",
+    "event", "events", "category", "tag", "careers", "career", "jobs", "job", "apply",
+})
+
+
+def _segments(url: str) -> list[str]:
+    return [s for s in urlsplit(url).path.lower().split("/") if s]
+
+
+def is_listing_or_article(url: str) -> bool:
+    """A blog post, news item, job or tag listing; never a people page."""
+    return any(s in NON_PEOPLE_SEGMENTS or s.endswith(".xml") for s in _segments(url))
+
+
+def is_people_page(url: str) -> bool:
+    """A team, leadership, about or management page (not the homepage)."""
+    segments = _segments(url)
+    if not segments or is_listing_or_article(url):
+        return False
+    return any(PEOPLE_PAGE_WORDS & set(re.split(r"[-_.]", s)) or "who-we-are" in s
+               for s in segments)
+
 def _source_for_url(url: str) -> tuple[str, int]:
     """Classify a URL's provenance honestly."""
     host = (urlsplit(url).netloc or "").lower()
@@ -95,13 +128,27 @@ class ContactDiscoveryReport:
     #: or the homepage read for its links and again as "/", cost one fetch.
     visited: set[str] = field(default_factory=set)
 
+    #: The employer's registrable domain; people-page text is read only on it.
+    employer_domain: str = ""
+
     def first_visit(self, url: str) -> bool:
+        """True the first time an equivalent URL is seen.
+
+        Scheme, "www.", letter case and a trailing slash do not make a
+        different page.
+        """
         parts = urlsplit(url)
-        key = (parts.netloc.lower(), parts.path.rstrip("/"), parts.query)
+        key = (parts.netloc.lower().removeprefix("www."),
+               parts.path.lower().rstrip("/"), parts.query)
         if key in self.visited:
             return False
         self.visited.add(key)
         return True
+
+    def on_employer_site(self, url: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower()
+        domain = self.employer_domain
+        return bool(domain) and (host == domain or host.endswith("." + domain))
 
     def add_emails(self, emails: list[str], url: str, stage: str) -> None:
         seen = {e["email"] for e in self.page_emails}
@@ -163,7 +210,10 @@ class ContactDiscovery:
         board_profile_urls: list[str] | None = None,
     ) -> ContactDiscoveryReport:
         """Run the three discovery stages and collect meaningful contacts."""
+        from nexbase.pipeline.normalize import extract_host, registrable_domain
+
         report = ContactDiscoveryReport(candidates=[])
+        report.employer_domain = registrable_domain(extract_host(company_website or "")) or ""
 
         stages = (
             (
@@ -247,6 +297,7 @@ class ContactDiscovery:
             return []
 
         report.pages_fetched += 1
+        report.first_visit(page.url)   # a redirect target is not fetched again
         self._harvest_size(page, report)
         if not page.ok:
             report.pages_blocked += 1
@@ -264,6 +315,10 @@ class ContactDiscovery:
             discovery_stage=stage.value,
             source_type=source_type,
             source_priority=source_priority,
+            # The page it landed on decides, so a redirect to a blog is not read.
+            plain_text=(stage is DiscoveryStage.PUBLIC_WEB
+                        and report.on_employer_site(page.url)
+                        and is_people_page(page.url)),
         )
         self.log.info(
             "contact_page_scanned",
@@ -535,7 +590,7 @@ class ContactDiscovery:
             if not href or href.startswith(("mailto:", "tel:", "#", "javascript:")):
                 continue
             url = _join(base, href)
-            if extract_host(url) != host:
+            if extract_host(url) != host or is_listing_or_article(url):
                 continue
             if any(token in url.lower() for token in CONTACT_PATH_TOKENS):
                 seen.setdefault(url.split("#")[0], None)
@@ -571,6 +626,8 @@ class ContactDiscovery:
         for url in candidates:
             if extract_host(url) != host:
                 continue  # never leave the validated employer domain
+            if is_listing_or_article(url):
+                continue  # "/post/team-shoutout-..." is a blog post, not the team
             if any(token in url.lower() for token in CONTACT_PATH_TOKENS):
                 picked.append(url)
             if len(picked) >= self.settings.contacts_sitemap_max_pages:

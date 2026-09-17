@@ -1,8 +1,11 @@
-"""Title-to-priority inference and structured contact extraction.
+"""Title-to-priority inference and contact extraction.
 
-Uses only structured selectors (JSON-LD, h-card/vcard, LinkedIn and mailto
-links) plus explicit keyword matching. Nothing is inferred from prose and no
-email address is ever constructed from a pattern.
+Uses structured selectors (JSON-LD, h-card/vcard, staff tables, LinkedIn and
+mailto links). On employer-site people pages only (the caller decides), explicit
+plain-text name/title pairs are read too: "Andy Dupuy - CEO & President",
+"Fred McManus, COO", or a name line followed by a title line. Both halves must
+pass: a plausible person name and a title on the POC list. Nothing is inferred
+from prose and no email address is ever constructed from a pattern.
 
 The POC priority tiers are exactly the Master Plan's:
   P1 Owner / CEO / President / Managing Partner
@@ -50,6 +53,14 @@ P4_TITLES = ("plant manager", "operations manager")
 _TITLE_EXCLUSIONS = (
     "assistant", "associate", "deputy", "former", "future", "aspiring",
     "owner operator", "product owner", "process owner",
+)
+
+
+#: A president of a division, region or group is not the company President:
+#: "President of Maintenance", "Division President". Removed before the P1 test.
+_QUALIFIED_PRESIDENT = re.compile(
+    r"\b(?:(?:division|divisional|regional|region|area|group|district|segment|"
+    r"sector|business|unit|branch|market|zone) president|president (?:of|for)\b.*$)"
 )
 
 
@@ -136,7 +147,8 @@ def infer_priority(title: str | None) -> int | None:
     if _EXCLUSION_PATTERN.search(normalized):
         return None
     for tier, pattern in _PRIORITY_PATTERNS.items():
-        if pattern.search(normalized):
+        text = _QUALIFIED_PRESIDENT.sub(" ", normalized) if tier == 1 else normalized
+        if pattern.search(text):
             return tier
     return None
 
@@ -479,14 +491,139 @@ def _mailto_contacts(soup: BeautifulSoup) -> list[ExtractedContact]:
     return contacts
 
 
+# ---------------------------------------------------------------------------
+# Plain-text name / title pairs (employer-site people pages only)
+# ---------------------------------------------------------------------------
+#: A page whose <title> says it is an error or a challenge lists nobody.
+_ERROR_TITLE_MARKERS = (
+    "not found", "404", "error", "access denied", "forbidden", "just a moment",
+    "attention required", "unavailable", "cloudflare", "captcha",
+)
+
+#: "Name - Title", "Name, Title", "Name | Title". Not "Label: Value", which is
+#: how job ads write "Reports To: Plant Manager".
+_PAIR_SEPARATOR = re.compile(r"\s+[-\u2013\u2014]\s+|\s*[\u2013\u2014|]\s*|,\s+")
+
+#: Words that make a line a sentence rather than a bare job title.
+_SENTENCE_WORDS = frozenset({
+    "the", "is", "are", "was", "were", "we", "our", "you", "your", "if", "can",
+    "will", "this", "that", "please", "to", "with", "it", "be", "a", "an", "has",
+    "have", "just", "may", "should", "site", "page", "website", "click", "contact",
+    "email", "call", "who", "what", "when", "how", "not",
+})
+
+#: Words that make a capitalised line a heading or an organisation, not a person:
+#: "Our Leadership", "Meet The Team", "Brown Construction Services".
+_NOT_PERSON_WORDS = frozenset({
+    "our", "meet", "leadership", "management", "executive", "executives", "staff",
+    "about", "company", "board", "directors", "officers", "welcome", "team",
+    "llc", "inc", "corp", "corporation", "co", "group", "services", "solutions",
+    "construction", "electric", "industries", "industrial", "holdings",
+    "department", "division", "office", "operations", "careers", "home",
+})
+
+
+#: Every word of a POC title, plus the title words around them. A line holding
+#: any of them is a title fragment ("President of Maintenance"), not a name.
+_TITLE_WORDS = frozenset(
+    word for titles in (P1_TITLES, P2_TITLES, P3_TITLES, P4_TITLES)
+    for title in titles for word in title.split()
+) | {"vice", "officer", "director", "manager", "chief", "head", "senior", "sr", "vp"}
+
+
+def _is_name_line(text: str) -> bool:
+    words = set(_normalize_title(text).split())
+    return (_valid_person_name(text) and _looks_like_person_name(text)
+            and not words & (_NOT_PERSON_WORDS | _TITLE_WORDS))
+
+
+def _is_title_line(text: str) -> bool:
+    """A short line that is only a POC title, not a sentence mentioning one."""
+    words = text.split()
+    if not 1 <= len(words) <= 8 or len(text) > 80:
+        return False
+    if any(ch in text for ch in "?!@") or text.rstrip().endswith("."):
+        return False
+    if set(_normalize_title(text).split()) & _SENTENCE_WORDS:
+        return False
+    return infer_priority(text) is not None
+
+
+#: Elements a site uses to set a person's name apart from the text around it.
+_NAME_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "dt", "th"})
+
+
+def _names_a_person(element) -> bool:
+    classes = " ".join(element.get("class") or []).lower()
+    return element.name in _NAME_TAGS or "name" in classes
+
+
+def _same_card(name_el, title_el) -> bool:
+    """The title sits in the name's own element or right beside it."""
+    return (name_el is title_el or name_el.parent is title_el.parent
+            or title_el.parent is name_el or name_el.parent is title_el)
+
+
+def _text_pair_contacts(html: str) -> list[ExtractedContact]:
+    """Explicit name/title pairs from a people page's text.
+
+    Accepted: one text node "Name - Title" / "Name, Title" / "Name | Title";
+    or a name node followed by a title node, when the name is set apart as a
+    heading, bold or ``*name*``-classed element in the same card as the title,
+    or both lines are in one element ("Jane Smith<br>HR Director"). Two loose
+    paragraphs that happen to be adjacent ("Great Benefits" / "General
+    Manager") are not a person.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    page_title = (soup.title.get_text(" ", strip=True) if soup.title else "").lower()
+    if any(marker in page_title for marker in _ERROR_TITLE_MARKERS):
+        return []
+    # Not <header>/<footer>: themes leave <header> unclosed, which nests the whole
+    # page inside it (brownandroot.com, live 2026-09-17). Menus live in <nav>.
+    for node in soup(["script", "style", "noscript", "nav", "form", "title", "head"]):
+        node.decompose()
+    blocks = [
+        (text, node.parent)
+        for node in soup.find_all(string=True)
+        if node.parent is not None and node.parent.name not in ("[document]", "html")
+        and (text := _WS.sub(" ", str(node)).strip())
+    ]
+
+    contacts: list[ExtractedContact] = []
+    for index, (text, element) in enumerate(blocks):
+        parts = _PAIR_SEPARATOR.split(text, maxsplit=1)
+        if len(parts) == 2 and _is_name_line(parts[0]) and _is_title_line(parts[1]):
+            name, title = parts
+        elif index + 1 < len(blocks):
+            next_text, next_element = blocks[index + 1]
+            if not (_is_name_line(text) and _is_title_line(next_text)):
+                continue
+            if _is_name_line(_PAIR_SEPARATOR.split(next_text, maxsplit=1)[0]):
+                continue
+            if not (element is next_element
+                    or (_names_a_person(element) and _same_card(element, next_element))):
+                continue
+            name, title = text, next_text
+        else:
+            continue
+        contacts.append(ExtractedContact(name=name.strip(), title=title.strip(),
+                                         email=None, profile_url=None, method="text"))
+    return contacts
+
+
 def extract_contacts_from_html(
     html: str | None,
     base_url: str | None = None,
     discovery_stage: str | None = None,
     source_type: str | None = None,
     source_priority: int | None = None,
+    plain_text: bool = False,
 ) -> list[ContactCandidate]:
-    """Extract structured contacts from page HTML using selectors only."""
+    """Extract contacts from page HTML.
+
+    ``plain_text=True`` also reads explicit name/title pairs from the page text.
+    Only an employer-site people page may set it.
+    """
     if not html:
         return []
     soup = BeautifulSoup(html, "html.parser")
@@ -498,6 +635,7 @@ def extract_contacts_from_html(
         + _block_contacts(soup)
         + _mailto_contacts(soup)
         + _linkedin_contacts(soup)
+        + (_text_pair_contacts(html) if plain_text else [])
     )
 
     seen: dict[str, ContactCandidate] = {}
@@ -551,6 +689,8 @@ def _confidence(item: ExtractedContact, priority: int | None) -> float:
         score += 0.25
     elif item.method in ("block", "mailto"):
         score += 0.2
+    elif item.method == "text":
+        score += 0.1
     if item.title:
         score += 0.2
     if priority:

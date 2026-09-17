@@ -221,14 +221,20 @@ Runs only for `QUALIFIED` companies, strongest hiring first, up to
    employer profile pages the sources published, then the employer's own site
    (homepage navigation, conventional team/contact paths, sitemap, subdomains).
    Public directory search pages are off (`CONTACTS_SEARCH_DIRECTORIES=false`).
-3. People are read only from structured markup (JSON-LD, h-card/vcard, staff
-   tables, named `mailto:` links, LinkedIn profile links); nothing is guessed.
+3. People are read from structured markup (JSON-LD, h-card/vcard, staff tables,
+   named `mailto:` links, LinkedIn profile links) and, on the employer's own
+   team / leadership / about / management pages only, from explicit plain-text
+   pairs: "Name - Title", "Name, Title", "Name | Title", a heading or bold name
+   with its title in the same card, or both lines in one element. The name must
+   look like a person and the title must be on the POC list; error pages, blog
+   posts, job pages, directories and the homepage are never read this way.
 4. **POC ranking**, only people whose title is on the list are kept:
    - P1 Owner / CEO / President / Managing Partner
    - P2 COO / VP Operations / Director of Operations / General Manager
    - P3 HR Director / HR Manager / Head of HR / Head of People / Talent Acquisition
    - P4 Plant Manager / Operations Manager
 
+   A division president ("President of Maintenance", "Regional President") is not P1.
    Titles match as whole words ("Vice President of Sales" is not a President,
    "HR Coordinator" is not a COO); "Assistant", "Associate", "Deputy" and "Former"
    titles are excluded. Within a tier: closeness to the roles being hired,

@@ -8,6 +8,39 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 6.1 — plain-text contacts on employer people pages (2026-09-17)
+
+Tests: 815 before, **857 passed** after (0 failed). Evidence:
+`reports/phase6_1_contact_smoke.json`.
+
+### Added / changed
+
+- `extraction._text_pair_contacts`, enabled by `extract_contacts_from_html(plain_text=True)`.
+  `ContactDiscovery._harvest` sets it only for the PUBLIC_WEB stage, on the
+  employer's registrable domain, when the page it landed on is a people page
+  (`discovery.is_people_page`: path word team / leadership / about / management /
+  executive / people / staff / who-we-are; never the homepage, blog, post, news,
+  careers, jobs or `.xml`). Accepted: one text node "Name - Title" / "Name, Title" /
+  "Name | Title"; or a name node then a title node when the name is a heading,
+  bold or `*name*`-classed element in the same card, or both lines share one
+  element. Not "Label: Value". The name must pass the person-name checks and
+  contain no title or heading/organisation word; the title must be at most 8
+  words, not a sentence, and on the POC list. Pages titled as errors or
+  challenges are skipped. Extraction method `text`, confidence below structured.
+- `infer_priority`: a qualified president ("President of X", "Division / Regional /
+  Group ... President") is not P1.
+- URL equivalence for one-fetch-per-page: scheme, "www.", case and trailing
+  slash ignored; a redirect target is marked visited. Homepage and sitemap link
+  selection skip blog / post / news / careers / jobs / `.xml` paths.
+- Live fix during the smoke: `<header>`/`<footer>` text is no longer stripped;
+  brownandroot.com leaves `<header>` unclosed around the whole page.
+
+### Removed
+
+| Removed | Callers | Tests | Why |
+|---|---|---|---|
+| P1 for "President of ..." and division/regional/group presidents | `infer_priority` | `test_division_presidents_are_not_p1` | Not the company President (user decision) |
+
 ## Phase 6 live smoke fixes (2026-09-17)
 
 Tests: 809 before, **815 passed** after (0 failed). Evidence:

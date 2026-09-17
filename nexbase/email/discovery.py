@@ -6,8 +6,16 @@ guessed: no ``first.last@domain`` construction, no permutation testing. The
 brief's rule is absolute ("Never fabricate ... contact details"), and a guessed
 address also poisons deliverability.
 
-Role mailboxes (info@, careers@, hr@) are collected separately from personal
-ones so the final lead can prefer a named human.
+Every address is classified as shared or personal:
+
+- ``ROLE``          a shared mailbox (hr@, careers@, recruiting@, jobs@, info@ ...),
+                    company-level evidence and never a person;
+- ``PERSONAL``      an individual's address attributed to a named contact;
+- ``UNATTRIBUTED``  an individual-looking address no named person was seen with.
+
+``on_company_domain`` records whether the address is on the employer's own
+domain, so an address published by a web agency or a job board is visible as
+such rather than silently counted as the company's.
 """
 from __future__ import annotations
 
@@ -50,6 +58,8 @@ class ObservedEmail:
     discovery_stage: str | None = None
     contact_name: str | None = None
     contact_title: str | None = None
+    #: True/False against the company's domain; None when no domain is known.
+    on_company_domain: bool | None = None
     verification_status: str = "PENDING"
 
     def as_dict(self) -> dict:
@@ -58,6 +68,7 @@ class ObservedEmail:
             "source_url": self.source_url, "source_portal": self.source_portal,
             "discovery_stage": self.discovery_stage,
             "contact_name": self.contact_name, "contact_title": self.contact_title,
+            "on_company_domain": self.on_company_domain,
             "verification_status": self.verification_status,
         }
 
@@ -106,10 +117,12 @@ class EmailDiscovery:
     def discover(
         self,
         contacts: list[dict],
-        extra_emails: list[str] | None = None,
+        extra_emails: list[str | dict] | None = None,
+        company_domain: str | None = None,
     ) -> EmailDiscoveryResult:
         result = EmailDiscoveryResult()
         seen: set[str] = set()
+        domain = (company_domain or "").lower() or None
 
         def add(raw, *, source_url=None, source_portal=None,
                 stage=None, name=None, title=None) -> None:
@@ -121,6 +134,9 @@ class EmailDiscovery:
             seen.add(email)
             role = is_role_email(email)
             (result.role if role else result.personal).append(email)
+            host = email.rsplit("@", 1)[-1]
+            on_domain = None if domain is None else (
+                host == domain or host.endswith("." + domain))
             # A role mailbox is company-level evidence and never a person, so
             # it is recorded without a name even when one was passed in.
             result.observed.append(
@@ -131,12 +147,13 @@ class EmailDiscovery:
                     discovery_stage=stage,
                     contact_name=None if role else name,
                     contact_title=None if role else title,
+                    on_company_domain=on_domain,
                 )
             )
 
         for contact in contacts or []:
             c = contact or {}
-            add(c.get("email"), source_url=c.get("profile_url"),
+            add(c.get("email"), source_url=c.get("source_url") or c.get("profile_url"),
                 source_portal=c.get("source_type"),
                 stage=c.get("discovery_stage"),
                 name=c.get("name"), title=c.get("title"))

@@ -24,12 +24,23 @@ from nexbase.contacts.ranking import (
     "title,expected",
     [
         ("Owner", 1), ("CEO", 1), ("President", 1), ("Managing Partner", 1),
-        ("Chief Executive Officer", 1), ("Founder & CEO", 1),
+        ("Chief Executive Officer", 1), ("Founder & CEO", 1), ("Co-Owner", 1),
+        ("President and COO", 1),                       # the most senior tier named
         ("COO", 2), ("VP Operations", 2), ("Director of Operations", 2),
-        ("General Manager", 2),
-        ("HR Director", 3), ("HR Manager", 3), ("Head of People", 3),
-        ("Talent Acquisition Manager", 3), ("Director of Talent Acquisition", 3),
+        ("General Manager", 2), ("Chief Operating Officer", 2),
+        ("Vice President of Operations", 2), ("VP, Operations", 2),
+        ("SVP of Operations", 2), ("Sr. Director of Operations", 2),
+        ("HR Director", 3), ("HR Manager", 3), ("Head of HR", 3), ("Head of People", 3),
+        ("Human Resources Manager", 3), ("Talent Acquisition Manager", 3),
+        ("Director of Talent Acquisition", 3), ("Talent Acquisition Coordinator", 3),
         ("Plant Manager", 4), ("Operations Manager", 4),
+        # Substring matches that used to rank wrongly.
+        ("Vice President of Sales", None),              # was P1 ("president")
+        ("HR Coordinator", None),                       # was P2 ("coo")
+        ("Product Owner", None), ("Principal Engineer", None),  # were P1
+        # Not in the Master Plan's POC list.
+        ("Managing Director", None), ("Founder", None), ("Warehouse Manager", None),
+        ("Facilities Manager", None), ("HR Business Partner", None),
         ("Software Engineer", None), ("Welder", None), (None, None),
     ],
 )
@@ -40,12 +51,46 @@ def test_priority_ladder(title, expected):
 def test_assistant_titles_are_not_decision_makers():
     assert infer_priority("Executive Assistant to the CEO") is None
     assert infer_priority("Owner Operator") is None  # a truck driver, not an owner
+    assert infer_priority("Owner/Operator") is None
+    assert infer_priority("Assistant Plant Manager") is None
+    assert infer_priority("Former CEO") is None
 
 
-def test_role_mailboxes_identified():
-    assert is_role_email("info@acme.com") is True
-    assert is_role_email("careers@acme.com") is True
-    assert is_role_email("jane.doe@acme.com") is False
+@pytest.mark.parametrize("email,shared", [
+    ("hr@acme.com", True), ("careers@acme.com", True), ("recruiting@acme.com", True),
+    ("jobs@acme.com", True), ("info@acme.com", True), ("dispatch@acme.com", True),
+    ("estimating@acme.com", True), ("orders@acme.com", True),
+    ("jane.doe@acme.com", False), ("mreed@acme.com", False),
+])
+def test_shared_and_personal_mailboxes_are_told_apart(email, shared):
+    assert is_role_email(email) is shared
+
+
+def test_every_observed_email_is_classified_with_provenance():
+    from nexbase.email.discovery import EmailDiscovery
+
+    result = EmailDiscovery().discover(
+        [{"name": "Jane Whitfield", "title": "CEO", "email": "jane@acme.com",
+          "source_url": "https://acme.com/team", "discovery_stage": "PUBLIC_WEB"}],
+        extra_emails=[
+            {"email": "hr@acme.com", "source_url": "https://indeed.com/viewjob?jk=1",
+             "source_portal": "indeed", "discovery_stage": "SAME_SOURCE"},
+            {"email": "mreed@acme.com", "source_url": "https://acme.com/contact",
+             "discovery_stage": "PUBLIC_WEB"},
+            {"email": "studio@webagency.com", "source_url": "https://acme.com/",
+             "discovery_stage": "PUBLIC_WEB"},
+        ],
+        company_domain="acme.com",
+    )
+    kinds = {o.email: (o.kind, o.on_company_domain, o.source_url) for o in result.observed}
+    assert kinds == {
+        "jane@acme.com": ("PERSONAL", True, "https://acme.com/team"),
+        "hr@acme.com": ("ROLE", True, "https://indeed.com/viewjob?jk=1"),
+        "mreed@acme.com": ("UNATTRIBUTED", True, "https://acme.com/contact"),
+        "studio@webagency.com": ("UNATTRIBUTED", False, "https://acme.com/"),
+    }
+    assert result.role == ["hr@acme.com"]
+    assert [o.contact_name for o in result.named] == ["Jane Whitfield"]
 
 
 # ---------------------------------------------------------------------------
@@ -266,3 +311,48 @@ def test_person_name_heuristic():
     assert _looks_like_person_name("234-200-0780") is False  # a phone number
     assert _looks_like_person_name("a@b.com") is False
     assert _looks_like_person_name("Director of Operations") is False
+
+
+# ---------------------------------------------------------------------------
+# Budgeted public page checks
+# ---------------------------------------------------------------------------
+def test_a_company_never_exceeds_its_page_budget(settings):
+    from nexbase.contacts.discovery import ContactDiscovery
+    from tests.test_pipeline_e2e import StubAccess
+
+    settings.contacts_max_pages_per_company = 3
+    settings.contacts_scan_subdomains = False
+    access = StubAccess({}, settings=settings)
+    discovery = ContactDiscovery(access=access, settings=settings)
+    discovery._host_is_live = lambda base: True
+    report = discovery.discover(
+        "Acme", "https://acme.com",
+        [f"https://www.indeed.com/viewjob?jk={n}" for n in range(5)],
+        ["https://www.indeed.com/cmp/Acme"],
+    )
+    assert len(access.requested) == 3 == report.pages_fetched
+    assert report.budget_exhausted is True
+
+
+def test_profile_pages_come_only_from_urls_the_sources_published(settings):
+    """A slug guessed from the name can be a different employer with the same name."""
+    from nexbase.contacts.discovery import ContactDiscovery
+    from tests.test_pipeline_e2e import StubAccess
+
+    access = StubAccess({}, settings=settings)
+    ContactDiscovery(access=access, settings=settings).discover(
+        "Summit Construction", None, [], [])
+    assert access.requested == []
+
+
+def test_page_emails_carry_the_page_they_were_seen_on(settings):
+    from nexbase.contacts.discovery import ContactDiscovery
+    from tests.test_pipeline_e2e import StubAccess
+
+    page = "<html><body><a href='mailto:hr@acme.com'>HR</a></body></html>"
+    access = StubAccess({"indeed.com/viewjob": page}, settings=settings)
+    report = ContactDiscovery(access=access, settings=settings).discover(
+        "Acme", None, ["https://www.indeed.com/viewjob?jk=9"], [])
+    assert report.page_emails == [{
+        "email": "hr@acme.com", "source_url": "https://www.indeed.com/viewjob?jk=9",
+        "source_portal": "JOB_BOARD", "discovery_stage": "SAME_SOURCE"}]

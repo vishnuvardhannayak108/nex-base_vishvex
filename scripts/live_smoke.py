@@ -135,7 +135,7 @@ def main() -> int:
                 continue
             contact_page["pages_fetched"] += found.pages_fetched
             contact_page["pages_blocked"] += found.pages_blocked
-            contact_page["emails"].extend(found.page_emails)
+            contact_page["emails"].extend(e["email"] for e in found.page_emails)
             contact_page["named_contacts"] += sum(
                 1 for c in found.candidates if c.name and c.email
             )

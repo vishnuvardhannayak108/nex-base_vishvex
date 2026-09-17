@@ -195,15 +195,96 @@ def test_duplicate_prevention_is_idempotent_across_runs(runner, universe, now, r
 # ---------------------------------------------------------------------------
 # 6. POC ranking
 # ---------------------------------------------------------------------------
-def test_contact_discovery_does_not_run_before_phase_6(runner, universe, now, recording_repo):
-    """Acme's team page is served, but nothing may read it before Phase 6."""
+def test_acceptance_6_poc_ranking(runner, universe, now):
     report = runner.run(raw_jobs=universe, now=now)
 
+    acme = next(l for l in report.qualified if l.company_name == "acme manufacturing")
+    assert acme.contact_discovery == "COMPLETED"
+    assert [(c["name"], c["title_priority"]) for c in acme.contacts] == [
+        ("Jane Whitfield", 1), ("Marcus Reed", 2), ("Priya Raman", 3)]
+    assert all(c["rank_score"] is not None for c in acme.contacts)
+
+
+def test_only_qualified_companies_are_searched(runner, universe, now, make_job):
+    """Rejected and review companies publish pages too; none may be fetched."""
+    review = make_job(company="Mystery Mfg", title="Welder", employees=None,
+                      industry="Manufacturing", company_website="https://mysterymfg.com",
+                      external_id="mystery-1")
+    runner.access.pages["mysterymfg.com"] = TEAM_PAGE
+    report = runner.run(raw_jobs=universe + [review], now=now)
+
+    [pending] = report.needs_review
+    assert pending.company_name == "mystery mfg"
+    assert pending.contact_discovery == "NOT_RUN" and pending.contacts == []
+    assert runner.access.requested, "the qualified company is searched"
+    assert not any("mysterymfg.com" in url or url == review.application_url
+                   for url in runner.access.requested)
+    assert report.contact_discovery["qualified"] == 1
+    assert report.contact_discovery["searched"] == 1
+
+
+def test_every_contact_and_email_keeps_its_provenance(runner, universe, now, recording_repo):
+    runner.run(raw_jobs=universe, now=now)
+
+    contacts = recording_repo.calls["contact"]
+    assert {c["name"] for c in contacts} == {"Jane Whitfield", "Marcus Reed", "Priya Raman"}
+    assert all(c["raw_payload"]["page_url"] and c["raw_payload"]["extraction"]
+               and c["discovery_stage"] and c["source_type"] for c in contacts)
+
+    evidence = recording_repo.calls["evidence"]
+    contact_rows = [e for e in evidence if e["record_type"] == "CONTACT"]
+    assert len(contact_rows) == 3 and all(e["url"] and e["record_id"] for e in contact_rows)
+
+    [jane] = [e for e in evidence if e.get("key") == "company_email"]
+    assert jane["value"] == "jane@acme-mfg.com"
+    assert jane["raw_payload"]["email_type"] == "PERSONAL"
+    assert jane["raw_payload"]["contact_name"] == "Jane Whitfield"
+    assert jane["raw_payload"]["on_company_domain"] is True
+    assert jane["url"]
+
+
+def test_emails_already_on_postings_are_captured_first(settings, recording_repo, make_job, now):
+    job = make_job(company="Acme Manufacturing", title="Plant Manager",
+                   employees="51 to 200", industry="Manufacturing",
+                   description="Apply to careers@acme-mfg.com or call.",
+                   external_id="acme-post")
+    runner = PipelineRunner(settings=settings, repo=recording_repo,
+                            access=StubAccess({}, settings=settings))
+    report = runner.run(raw_jobs=[job], now=now)
+
+    [lead] = report.qualified
+    assert lead.role_mailboxes == ["careers@acme-mfg.com"]
+    assert lead.email_status == "ROLE_EMAIL_FOUND"
+    [row] = [e for e in recording_repo.calls["evidence"] if e.get("key") == "company_email"]
+    assert row["raw_payload"]["email_type"] == "ROLE"
+    assert row["raw_payload"]["discovery_stage"] == "SAME_SOURCE"
+    assert row["raw_payload"]["source_portal"] == "indeed"
+    assert row["url"] == job.application_url
+
+
+def test_the_company_budget_caps_searches_best_first(settings, recording_repo, make_job, now):
+    settings.contacts_max_companies_per_run = 1
+    jobs = [make_job(company="Busy Co", title=t, employees="51 to 200",
+                     industry="Manufacturing", company_website="https://busyco.com",
+                     external_id=f"busy-{t}") for t in ("Welder", "Machinist")]
+    jobs.append(make_job(company="Quiet Co", title="Welder", employees="51 to 200",
+                         industry="Manufacturing", company_website="https://quietco.com",
+                         external_id="quiet-1"))
+    access = StubAccess({}, settings=settings)
+    report = PipelineRunner(settings=settings, repo=recording_repo, access=access).run(
+        raw_jobs=jobs, now=now)
+
+    status = {lead.display_name: lead.contact_discovery for lead in report.qualified}
+    assert status == {"Busy Co": "COMPLETED", "Quiet Co": "SKIPPED_COMPANY_BUDGET"}
+    assert not any("quietco.com" in url for url in access.requested)
+    assert report.contact_discovery["skipped_budget"] == 1
+
+
+def test_stop_at_before_contacts_searches_nothing(runner, universe, now):
+    report = runner.run(raw_jobs=universe, now=now, stop_at="before_contacts")
     assert report.qualified
-    assert all(lead.contacts == [] and lead.emails == [] for lead in report.qualified + report.needs_review)
-    assert "contact" not in recording_repo.calls
-    assert not any(r.get("key") == "company_email" for r in recording_repo.calls.get("evidence", []))
-    assert runner.access.requested == [], "no company page is fetched"
+    assert all(lead.contact_discovery == "NOT_RUN" for lead in report.qualified)
+    assert runner.access.requested == []
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +304,7 @@ def test_every_stage_is_timed_and_reported(runner, universe, now):
     assert report.run_key
     assert list(report.stages) == [
         "discovery", "normalization", "job_deduplication", "freshness",
-        "company_identification", "qualification", "persistence",
+        "company_identification", "qualification", "persistence", "contact_discovery",
     ]
     assert all(s["status"] == "OK" and s["duration_ms"] >= 0 for s in report.stages.values())
     assert report.to_dict()["stages"] == report.stages
@@ -247,12 +328,6 @@ def test_dry_run_writes_nothing(settings, universe, now):
     runner = PipelineRunner(settings=settings, repo=repo, access=access)
     runner.run(raw_jobs=universe, now=now, persist=False)
     assert repo.calls == {}
-
-
-def test_stop_at_before_contacts(runner, universe, now):
-    report = runner.run(raw_jobs=universe, now=now, stop_at="before_contacts")
-    assert report.qualified
-    assert all(lead.contacts == [] for lead in report.qualified)
 
 
 def test_empty_input_is_safe(runner, now):

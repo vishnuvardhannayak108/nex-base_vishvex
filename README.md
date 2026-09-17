@@ -55,15 +55,15 @@ Shared infrastructure:
 | 3 | Direct sources + ATS + JobSpy cleanup | **done** |
 | 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | **done** |
-| 6 | Free/public contact discovery | pending (code kept, not executed) |
+| 6 | Free/public contact discovery | **done** |
 | 7 | Enrichment waterfall ZoomInfo -> Apollo -> Apify | pending (not wired) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
 The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
-company identification -> qualify -> resolve domains -> persist. Free contact discovery
-(`nexbase/contacts`) is **not executed** until Phase 6; paid enrichment and email
-verification are **not called**.
+company identification -> qualify -> resolve domains -> persist -> free / public contact
+discovery + POC ranking (QUALIFIED companies only). Paid enrichment and email verification
+are **not called**.
 
 ## Planner and source registry
 
@@ -149,7 +149,7 @@ python -m nexbase.cli sectors --sector Manufacturing  # sectors + suggested jobs
 python -m nexbase.cli sources                         # registry: class, handler, enabled
 python -m nexbase.cli plan --sector Manufacturing --job "Warehouse Manager"
 python -m nexbase.cli run --sector Manufacturing --job "Warehouse Manager" --dry-run
-python -m nexbase.cli run ... --stop-at before_contacts   # accepted; every run stops there until Phase 6
+python -m nexbase.cli run ... --stop-at before_contacts   # skip contact discovery
 python -m nexbase.cli export leads.csv --status QUALIFIED
 ```
 
@@ -206,6 +206,40 @@ rate limited per caller (`NEXBASE_API_RATE_LIMIT`, default 60/min).
   review flag -> `NEEDS_REVIEW`; else `QUALIFIED`. Reasons are stored on the
   company (`qualification_reasons`, `review_flags`, `qualification_breakdown`) and
   as one `qualification_reasons` row each with its `outcome`.
+
+## Free / public contact discovery
+
+Runs only for `QUALIFIED` companies, strongest hiring first, up to
+`CONTACTS_MAX_COMPANIES_PER_RUN`; the rest are marked `SKIPPED_COMPANY_BUDGET`.
+`NEEDS_REVIEW` and `REJECTED` companies are never searched.
+
+1. **Emails already on the postings** (the sources' email fields and addresses in
+   the description), stage `SAME_SOURCE`.
+2. **Budgeted public page checks** through the Access Layer, at most
+   `CONTACTS_MAX_PAGES_PER_COMPANY` fetches per company, stopping once
+   `CONTACTS_TARGET` named decision-makers are found: the postings' own pages,
+   employer profile pages the sources published, then the employer's own site
+   (homepage navigation, conventional team/contact paths, sitemap, subdomains).
+   Public directory search pages are off (`CONTACTS_SEARCH_DIRECTORIES=false`).
+3. People are read only from structured markup (JSON-LD, h-card/vcard, staff
+   tables, named `mailto:` links, LinkedIn profile links); nothing is guessed.
+4. **POC ranking**, only people whose title is on the list are kept:
+   - P1 Owner / CEO / President / Managing Partner
+   - P2 COO / VP Operations / Director of Operations / General Manager
+   - P3 HR Director / HR Manager / Head of HR / Head of People / Talent Acquisition
+   - P4 Plant Manager / Operations Manager
+
+   Titles match as whole words ("Vice President of Sales" is not a President,
+   "HR Coordinator" is not a COO); "Assistant", "Associate", "Deputy" and "Former"
+   titles are excluded. Within a tier: closeness to the roles being hired,
+   extraction confidence, a published email, earlier discovery stage.
+5. **Emails** are classified `ROLE` (shared: hr@, careers@, recruiting@, jobs@,
+   info@, dispatch@ ...), `PERSONAL` (a named contact's) or `UNATTRIBUTED`, with
+   `on_company_domain`.
+
+Provenance: each contact row keeps its stage, source type, page URL and
+extraction method, plus a `CONTACT` evidence row; each address is a
+`company_email` evidence row with its type, source URL, portal and stage.
 
 ## Observability
 

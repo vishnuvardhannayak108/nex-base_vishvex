@@ -8,6 +8,49 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 6 — Free / public contact discovery (2026-09-17)
+
+Tests: 773 before, **809 passed** after (0 failed).
+
+Reused: `nexbase/contacts/discovery.py` (stage order, Access Layer fetches,
+homepage/path/sitemap/subdomain checks), `contacts/extraction.py` (structured
+extraction, role mailboxes), `contacts/ranking.py` (P1-P4 selection),
+`email/discovery.py` (observed-only emails). No paid provider, enrichment, email
+verification or sending.
+
+### Added / changed
+
+- Runner stage 8 `contact_discovery`: QUALIFIED companies only, strongest hiring
+  first, capped by `CONTACTS_MAX_COMPANIES_PER_RUN` (40). Emails already on the
+  postings are collected first with their job URL and portal. `stop_at=
+  "before_contacts"` skips the stage. `QualifiedLead.contact_discovery` and
+  `report.contact_discovery` record what happened.
+- `CONTACTS_MAX_PAGES_PER_COMPANY` (30): every fetch, sitemap and subdomain
+  lookup stops at the budget (`budget_exhausted`). The discovery module had no
+  per-company limit.
+- **POC titles** (`infer_priority`): whole-word matching on a normalized title,
+  tiers exactly the Master Plan's list. Verified bugs fixed: "Vice President of
+  Sales" was P1 ("president"), "HR Coordinator" and "Talent Acquisition
+  Coordinator" were P2 ("coo"), "Product Owner" and "Principal Engineer" were P1,
+  "VP, Operations" matched nothing. "Assistant/Associate/Deputy/Former" titles
+  are excluded.
+- Page emails keep the page they were seen on (`page_emails` entries are
+  `{email, source_url, source_portal, discovery_stage}`); the homepage's own
+  addresses are now read too.
+- `ObservedEmail.on_company_domain`; shared-mailbox list extended with department
+  mailboxes (orders, dispatch, estimating, accounting, payroll, ...).
+- Every contact gets a `CONTACT` evidence row; every observed address a
+  `company_email` evidence row (all types, not only role mailboxes).
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| P1 `managing director`, `founder`, `co-founder`, `principal`, `proprietor`, `chairman/chairwoman/chairperson`; P2 `head of operations`, `chief operating` (kept `chief operating officer`); P3 `head of talent`, `talent acquisition director/manager` (covered by `talent acquisition`); P4 `facility/facilities/site/production/warehouse/manufacturing manager` | `infer_priority` (extraction, ranking) | `test_contacts.py` ladder (updated) | Not in the Master Plan's POC list |
+| `OTHER_SOURCE_TEMPLATES`, `_slugify` (Indeed `/cmp/{slug}` URLs guessed from the name) | `ContactDiscovery._other_sources` only | none | A guessed profile can belong to a same-named employer; only URLs the postings carried are used |
+| `contacts_search_directories` default `True` -> `False` | `ContactDiscovery._directory_pages` | `test_hardening.py` (updated) | A directory search results page lists other businesses, so its addresses cannot be attributed to this company |
+| `test_contact_discovery_does_not_run_before_phase_6`, `test_stop_at_before_contacts` (`test_pipeline_e2e.py`) | — | themselves | Replaced by `test_acceptance_6_poc_ranking`, `test_only_qualified_companies_are_searched`, `test_stop_at_before_contacts_searches_nothing` |
+
 ## Phase 5 decisions applied (2026-09-17)
 
 Tests: 758 before, **773 passed** after (0 failed).

@@ -1,12 +1,14 @@
-"""Module 7: Contact Discovery (strict order).
+"""Free / public contact discovery (Master Plan Phase 6), strict order.
 
-1. Same source first   (the original job page and its employer profile).
-2. Other sources       (other job portals carrying the same employer).
-3. Public web last     (company leadership/team pages, public directories).
+1. Same source first   (the qualified job postings' own pages).
+2. Other sources       (employer profile pages the sources published).
+3. Public web last     (the employer's own site: navigation, conventional
+                        team/contact paths, sitemap, subdomains; then public
+                        directories when enabled).
 
-Uses the Access Layer (Scrapling -> Camoufox per-page fallback) for every
-fetch. ATS data only provides hiring signals; contact discovery is a separate
-stage.
+Every fetch goes through the Access Layer (SSRF guard, robots.txt, Scrapling ->
+Camoufox fallback) and counts against ``CONTACTS_MAX_PAGES_PER_COMPANY``. Every
+address seen is kept with the page it was seen on.
 
 Provenance is recorded honestly: a contact scraped off an Indeed employer page
 is tagged ``JOB_BOARD``, not ``COMPANY_WEBSITE``. Getting this wrong made the
@@ -59,20 +61,6 @@ CONTACT_PATH_TOKENS = (
     "staff", "about-us", "who-we-are", "executive", "directory",
 )
 
-#: Employer-profile URL templates on the boards we already searched.
-#: These are public pages; nothing behind a login is touched.
-OTHER_SOURCE_TEMPLATES = (
-    ("indeed", "https://www.indeed.com/cmp/{slug}/about"),
-    ("indeed", "https://www.indeed.com/cmp/{slug}"),
-)
-
-
-def _slugify(name: str) -> str:
-    return "-".join(part for part in "".join(
-        ch if ch.isalnum() or ch.isspace() else " " for ch in (name or "")
-    ).split())
-
-
 def _source_for_url(url: str) -> tuple[str, int]:
     """Classify a URL's provenance honestly."""
     host = (urlsplit(url).netloc or "").lower()
@@ -98,15 +86,21 @@ class ContactDiscoveryReport:
     #: An explicit headcount seen on a page that was fetched for contacts.
     size_evidence: object | None = None
     #: Every address seen on the pages visited, even when it could not be
-    #: attributed to a named person. Observed, never guessed.
-    page_emails: list[str] = field(default_factory=list)
+    #: attributed to a named person, as ``{email, source_url, source_portal,
+    #: discovery_stage}``. Observed, never guessed; the first sighting is kept.
+    page_emails: list[dict] = field(default_factory=list)
+    #: True when the page budget stopped discovery before it was satisfied.
+    budget_exhausted: bool = False
 
-    def add_emails(self, emails: list[str]) -> None:
-        seen = set(self.page_emails)
+    def add_emails(self, emails: list[str], url: str, stage: str) -> None:
+        seen = {e["email"] for e in self.page_emails}
+        source_type, _ = _source_for_url(url)
         for email in emails:
             if email not in seen:
                 seen.add(email)
-                self.page_emails.append(email)
+                self.page_emails.append({"email": email, "source_url": url,
+                                         "source_portal": source_type,
+                                         "discovery_stage": stage})
 
 
 class ContactDiscovery:
@@ -186,6 +180,13 @@ class ContactDiscovery:
     def _enough(self, contacts: list[ContactCandidate]) -> bool:
         return self._meaningful_count(contacts) >= self.settings.contacts_target
 
+    def _budget_left(self, report: ContactDiscoveryReport) -> bool:
+        """False once this company has used its page budget."""
+        if report.pages_fetched < self.settings.contacts_max_pages_per_company:
+            return True
+        report.budget_exhausted = True
+        return False
+
     @staticmethod
     def _meaningful_count(contacts: list[ContactCandidate]) -> int:
         seen: set[str] = set()
@@ -201,6 +202,8 @@ class ContactDiscovery:
         report: ContactDiscoveryReport,
         company_name: str,
     ) -> list[ContactCandidate]:
+        if not self._budget_left(report):
+            return []
         try:
             page = self.access.fetch(url)
         except Exception as exc:
@@ -216,7 +219,7 @@ class ContactDiscovery:
             )
             return []
 
-        report.add_emails(extract_emails_from_html(page.html))
+        report.add_emails(extract_emails_from_html(page.html), page.url, stage.value)
 
         source_type, source_priority = _source_for_url(page.url)
         found = extract_contacts_from_html(
@@ -263,16 +266,13 @@ class ContactDiscovery:
         board_profile_urls: list[str],
         report: ContactDiscoveryReport,
     ) -> list[ContactCandidate]:
-        """Employer profile pages on the boards, plus board-profile URLs already seen.
+        """Employer profile pages the sources themselves published.
 
-        Previously this stage was a hardcoded ``return []``.
+        Only URLs a posting carried are used. A profile URL guessed from the
+        company name can belong to a different employer with the same name.
         """
         contacts: list[ContactCandidate] = []
         urls: list[str] = list(dict.fromkeys(board_profile_urls))
-
-        slug = _slugify(company_name)
-        if slug:
-            urls.extend(template.format(slug=slug) for _, template in OTHER_SOURCE_TEMPLATES)
 
         for url in urls[:4]:
             if self._enough(contacts):
@@ -334,7 +334,7 @@ class ContactDiscovery:
         # page somewhere unguessable. The sitemap names it, so this reads the
         # sitemap rather than crawling - only URLs whose path already looks like
         # a team/contact page are fetched, and only from this same host.
-        if not self._enough(contacts):
+        if not self._enough(contacts) and self._budget_left(report):
             for url in self._sitemap_contact_pages(base):
                 if self._enough(contacts):
                     break
@@ -346,7 +346,7 @@ class ContactDiscovery:
         # apex: careers.acme.com, hr.acme.com. Candidates come from Certificate
         # Transparency and are ranked before any is fetched, so this stays a
         # short list of likely hosts, not a sweep.
-        if not self._enough(contacts):
+        if not self._enough(contacts) and self._budget_left(report):
             for url in self._subdomain_contact_pages(base):
                 if self._enough(contacts):
                     break
@@ -476,6 +476,8 @@ class ContactDiscovery:
 
         from nexbase.pipeline.normalize import extract_host
 
+        if not self._budget_left(report):
+            return []
         try:
             page = self.access.fetch(base)
         except Exception:
@@ -484,6 +486,8 @@ class ContactDiscovery:
         if not page.ok:
             report.pages_blocked += 1
             return []
+        report.add_emails(extract_emails_from_html(page.html), page.url,
+                          DiscoveryStage.PUBLIC_WEB.value)
 
         host = extract_host(base)
         seen: dict[str, None] = {}

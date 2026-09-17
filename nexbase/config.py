@@ -91,9 +91,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Free / public contact discovery + POC ranking
     # ------------------------------------------------------------------
-    #: Three is a target, not a cap.
+    #: Runs on QUALIFIED companies only. Three is a target, not a cap.
     contacts_target: int = 3
     contacts_max: int = 6
+    #: Companies whose contacts are searched in one run, best first.
+    contacts_max_companies_per_run: int = 40
+    #: Page fetches one company may use, every stage included.
+    contacts_max_pages_per_company: int = 30
     #: Pause before re-checking a host that failed to resolve once.
     contacts_dns_retry_delay_seconds: float = 1.0
     contacts_homepage_max_links: int = 6
@@ -103,7 +107,9 @@ class Settings(BaseSettings):
     contacts_scan_subdomains: bool = True
     contacts_subdomain_max_hosts: int = 3
     #: Public business directories, only after the company's own site is empty.
-    contacts_search_directories: bool = True
+    #: Off: a directory search page lists other businesses, so an address on it
+    #: cannot be attributed to this one.
+    contacts_search_directories: bool = False
 
     # ------------------------------------------------------------------
     # Access layer (every self-driven fetch)

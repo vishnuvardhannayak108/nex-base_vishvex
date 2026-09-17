@@ -4,11 +4,14 @@ Uses only structured selectors (JSON-LD, h-card/vcard, LinkedIn and mailto
 links) plus explicit keyword matching. Nothing is inferred from prose and no
 email address is ever constructed from a pattern.
 
-The priority tiers mirror the client brief exactly:
-  P1 Owner, CEO, President, Managing Partner
-  P2 COO, VP Operations, Director of Operations, General Manager
-  P3 HR Director/Manager, Head of HR, Head of People, TA Director/Manager
-  P4 Plant Manager, Operations Manager
+The POC priority tiers are exactly the Master Plan's:
+  P1 Owner / CEO / President / Managing Partner
+  P2 COO / VP Operations / Director of Operations / General Manager
+  P3 HR Director / HR Manager / Head of HR / People / Talent Acquisition
+  P4 Plant Manager / Operations Manager
+Each tier lists those titles and their spelled-out forms only. Titles are
+matched as whole words on a normalized title, so "HR Coordinator" is not a COO
+and "Vice President of Sales" is not a President.
 """
 from __future__ import annotations
 
@@ -21,40 +24,50 @@ from bs4 import BeautifulSoup
 
 from nexbase.contacts.models import ContactCandidate
 
+#: Written in normalized form: lowercase, punctuation as spaces, "&" as "and",
+#: and "vice president" / "svp" / "evp" as "vp".
 P1_TITLES = (
-    "owner", "co-owner", "ceo", "chief executive", "president",
-    "managing partner", "managing director", "founder", "co-founder",
-    "principal", "proprietor", "chairman", "chairwoman", "chairperson",
+    "owner", "co owner", "ceo", "chief executive", "chief executive officer",
+    "president", "managing partner",
 )
 P2_TITLES = (
-    "coo", "chief operating", "vp operations", "vp of operations",
-    "vice president operations", "vice president of operations",
-    "director of operations", "operations director", "general manager",
-    "svp operations", "evp operations", "head of operations",
+    "coo", "chief operating officer", "vp operations", "vp of operations",
+    "director of operations", "director operations", "operations director",
+    "general manager",
 )
 P3_TITLES = (
-    "hr director", "director of hr", "hr manager", "human resources director",
-    "human resources manager", "head of hr", "head of human resources",
-    "head of people", "people director", "director of people",
-    "vp of people", "vp people", "vice president of people", "chief people officer",
-    "talent acquisition director", "director of talent acquisition",
-    "talent acquisition manager", "manager of talent acquisition",
-    "head of talent", "talent acquisition",
+    "hr director", "director of hr", "hr manager", "manager of hr", "head of hr",
+    "human resources director", "director of human resources",
+    "human resources manager", "manager of human resources", "head of human resources",
+    "head of people", "people director", "director of people", "vp people",
+    "vp of people", "chief people officer", "talent acquisition",
 )
-P4_TITLES = (
-    "plant manager", "operations manager", "facility manager",
-    "facilities manager", "site manager", "production manager",
-    "warehouse manager", "manufacturing manager",
-)
+P4_TITLES = ("plant manager", "operations manager")
 
-_PRIORITY_TITLES = {1: P1_TITLES, 2: P2_TITLES, 3: P3_TITLES, 4: P4_TITLES}
-
-#: Titles that merely *contain* a keyword but are not the decision-maker,
-#: e.g. "Executive Assistant to the CEO", "Owner Operator" (a truck driver).
+#: Whole words or phrases that make a title something other than the listed
+#: role: "Assistant Plant Manager", "Former CEO", "Owner Operator" (a truck
+#: driver), "Product Owner" (a software role).
 _TITLE_EXCLUSIONS = (
-    "assistant to", "executive assistant", "administrative assistant",
-    "owner operator", "owner-operator", "future", "aspiring", "former",
+    "assistant", "associate", "deputy", "former", "future", "aspiring",
+    "owner operator", "product owner", "process owner",
 )
+
+
+def _normalize_title(title: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", title.lower().replace("&", " and "))
+    # "Senior/Executive Vice President" (SVP, EVP) is a vice president too.
+    return re.sub(r"\b(?:vice president|svp|evp)\b", "vp", _WS.sub(" ", text).strip())
+
+
+def _words_pattern(phrases) -> re.Pattern:
+    return re.compile(r"\b(?:" + "|".join(re.escape(p) for p in phrases) + r")\b")
+
+
+_PRIORITY_PATTERNS = {
+    tier: _words_pattern(titles)
+    for tier, titles in ((1, P1_TITLES), (2, P2_TITLES), (3, P3_TITLES), (4, P4_TITLES))
+}
+_EXCLUSION_PATTERN = _words_pattern(_TITLE_EXCLUSIONS)
 
 _MAILTO_RE = re.compile(r"^mailto:([^?]+)", re.IGNORECASE)
 #: "jane [at] acme [dot] com" and friends.
@@ -85,6 +98,12 @@ _ROLE_LOCALPARTS = frozenset(
         "talentacquisition", "recruiter", "recruiters", "recruitment",
         "staffing", "hiring", "employment", "apply", "applications",
         "resume", "resumes", "cv", "hrdept", "hrdepartment", "peopleops",
+        # Department mailboxes small employers publish instead of a person.
+        "orders", "order", "service", "customerservice", "customer-service",
+        "estimating", "estimates", "quotes", "quote", "dispatch", "accounting",
+        "payroll", "purchasing", "shipping", "receiving", "reception",
+        "frontdesk", "safety", "operations", "ops", "mail", "email", "feedback",
+        "press", "media", "privacy", "legal", "compliance", "security",
     }
 )
 
@@ -107,15 +126,18 @@ def is_role_email(email: str | None) -> bool:
 
 
 def infer_priority(title: str | None) -> int | None:
-    """Map a job title to its ContactPriority tier (1..4), or None."""
+    """Map a title to its POC priority tier (1..4), or None.
+
+    The most senior tier named wins: "President & COO" is P1.
+    """
     if not title:
         return None
-    t = _WS.sub(" ", title.strip().lower())
-    if any(x in t for x in _TITLE_EXCLUSIONS):
+    normalized = _normalize_title(title)
+    if _EXCLUSION_PATTERN.search(normalized):
         return None
-    for priority in (1, 2, 3, 4):
-        if any(k in t for k in _PRIORITY_TITLES[priority]):
-            return priority
+    for tier, pattern in _PRIORITY_PATTERNS.items():
+        if pattern.search(normalized):
+            return tier
     return None
 
 

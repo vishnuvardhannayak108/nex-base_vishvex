@@ -861,7 +861,8 @@ def test_contact_discovery_has_a_subdomain_and_directory_stage(settings):
     assert hasattr(disc, "_subdomain_contact_pages")
     assert hasattr(disc, "_public_directories")
     assert settings.contacts_scan_subdomains is True
-    assert settings.contacts_search_directories is True
+    # Off by default: a directory search page lists other businesses.
+    assert settings.contacts_search_directories is False
 
 
 def test_industry_is_judged_against_the_selected_sector_not_a_global_list(

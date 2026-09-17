@@ -36,8 +36,15 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Paid providers (enrichment runs only on QUALIFIED companies)
     # ------------------------------------------------------------------
+    #: "username:password" (documented /authenticate) or a pre-issued JWT.
     zoominfo_api_key: str = ""
     zoominfo_api_url: str = ""
+    #: QUALIFIED companies ZoomInfo may be consulted for in one run.
+    zoominfo_max_companies_per_run: int = 25
+    #: Contact Enrich records (one credit each) per company.
+    zoominfo_max_contact_enrich_per_company: int = 3
+    #: A company consulted within this many days reuses its stored ZoomInfo contacts.
+    zoominfo_refresh_days: int = 90
     apollo_api_key: str = ""
     apollo_api_url: str = "https://api.apollo.io/api/v1"
     zerobounce_api_key: str = ""

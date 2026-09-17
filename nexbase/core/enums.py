@@ -39,6 +39,9 @@ class EmailStatus(str, Enum):
     PERSONAL_EMAIL_FOUND = "PERSONAL_EMAIL_FOUND"
     ROLE_EMAIL_FOUND = "ROLE_EMAIL_FOUND"
     MULTIPLE_EMAILS_FOUND = "MULTIPLE_EMAILS_FOUND"
+    #: Only portal-generated, external or domain-mismatched addresses were seen:
+    #: kept as evidence, not the employer's own mailbox.
+    LOW_CONFIDENCE_EMAIL_FOUND = "LOW_CONFIDENCE_EMAIL_FOUND"
     NO_PUBLIC_EMAIL_FOUND = "NO_PUBLIC_EMAIL_FOUND"
 
 

@@ -8,6 +8,58 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 7 — ZoomInfo enrichment (2026-09-17)
+
+Tests: 857 before, **887 passed** after (0 failed); 30 new in `tests/test_zoominfo.py`.
+
+### API evidence
+
+Read from ZoomInfo's published documentation (api-docs.zoominfo.com, Postman
+collection; saved under the session scratchpad). No ZoomInfo credentials were
+available: nothing has run against a live account.
+
+- Legacy Enterprise API (documented, marked as being deprecated):
+  `POST /authenticate {username, password} -> {jwt}` (60 min);
+  `POST /enrich/company {matchCompanyInput, outputFields} -> data.result[].data[]`;
+  `POST /search/contact` -> `data[]` previews with `hasEmail`, **no email**;
+  `POST /enrich/contact {matchPersonInput:[{personId}] (<=25), outputFields}` ->
+  `data.result[].data[]` with `email`, `jobTitle`, `externalUrls`,
+  `contactAccuracyScore`. No match-status field is documented.
+- New OAuth API (docs.zoominfo.com): only the `llms.txt` summaries could be read
+  (reference pages returned a bot challenge). They state search consumes no
+  credits and each enriched record charges one unless under management, with no
+  charge for "no match" or errors. Not implemented.
+
+### Added / changed
+
+- Email classification (`email/discovery.py`): `PERSONAL`, `ROLE`,
+  `PORTAL_GENERATED`, `EXTERNAL_UNVERIFIED`, `DOMAIN_MISMATCH`, each with
+  `confidence`, `source`, `source_type`, `evidence_url`, `extraction_method`.
+  Only PERSONAL and ROLE are trusted; the rest are preserved as evidence.
+  New `EmailStatus.LOW_CONFIDENCE_EMAIL_FOUND`. An address can no longer be
+  counted as the employer's when the employer's domain is unknown.
+- `enrichment/zoominfo.py` rewritten to the documented endpoints and fields.
+- `enrichment/zoominfo_stage.py`: skip rules, strict company matching,
+  gap-filling contact enrichment, person dedupe and merge, provenance, cross-run
+  reuse, enrichment logs.
+- Runner stage 9 `zoominfo_enrichment` (QUALIFIED only, after contact discovery);
+  `stop_at="before_enrichment"` (runner, API, CLI); `QualifiedLead.enrichment`;
+  `report.zoominfo_enrichment`.
+- Settings: `ZOOMINFO_MAX_COMPANIES_PER_RUN` (25),
+  `ZOOMINFO_MAX_CONTACT_ENRICH_PER_COMPANY` (3), `ZOOMINFO_REFRESH_DAYS` (90).
+
+### Removed / replaced
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `POST /enrich/company-master` with standard output fields | `ZoomInfoProvider.enrich` only | `test_enrichment_providers.py` (unconfigured path, still passes) | Company Master Data Enrich uses `zi_c_*` fields; the fields requested belong to `/enrich/company` |
+| Reading `email` from Contact Search rows | `ZoomInfoProvider._search_contacts` | none | The documented search response has no email, only `hasEmail` |
+| `profile_url` from `contactAccuracyScore` | `_search_contacts` | none | A numeric score is not a URL; LinkedIn comes from `externalUrls` |
+| `"username:private_key"` posted as a password | `_get_token` | none | The authenticate endpoint takes username + password; PKI needs ZoomInfo's signing library |
+| `managementLevel` / `department` search values (`"C Level Exec"` ...) | `_search_contacts` | none | Valid values could not be confirmed; the documented `jobTitle` OR search with the POC titles is used |
+| `ObservedEmail.kind` (`PERSONAL` / `ROLE` / `UNATTRIBUTED`), `source_url`, `source_portal` | runner, `test_contacts.py`, `test_hardening.py`, `test_pipeline_e2e.py` | updated | Replaced by `email_class` and the required provenance fields |
+| `test_runner_calls_no_paid_provider_and_sends_nothing` | — | itself | ZoomInfo is now wired; replaced by a guard for Apollo, verification and outreach |
+
 ## Phase 6.1 — plain-text contacts on employer people pages (2026-09-17)
 
 Tests: 815 before, **857 passed** after (0 failed). Evidence:

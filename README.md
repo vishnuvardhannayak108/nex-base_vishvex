@@ -28,7 +28,8 @@ USER (Sector + Job)
   -> Qualification engine ............ nexbase/pipeline/qualification.py, profile.py
   -> Free / public contact discovery . nexbase/contacts/discovery.py, extraction.py,
                                        nexbase/email/discovery.py
-  -> ZoomInfo -> Apollo -> Apify ..... nexbase/enrichment/ (providers only, not wired)
+  -> ZoomInfo ....................... nexbase/enrichment/zoominfo.py, zoominfo_stage.py
+  -> Apollo -> Apify ................ nexbase/enrichment/apollo.py (not wired)
   -> POC ranking ..................... nexbase/contacts/ranking.py
   -> Email verification .............. nexbase/email/verification.py (not wired)
   -> Final lead + export ............. nexbase/pipeline/runner.py, nexbase/export.py,
@@ -56,14 +57,14 @@ Shared infrastructure:
 | 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | **done** |
 | 6 | Free/public contact discovery | **done** |
-| 7 | Enrichment waterfall ZoomInfo -> Apollo -> Apify | pending (not wired) |
+| 7 | ZoomInfo enrichment | **done** (fixture-tested; no live account) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
 The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
 company identification -> qualify -> resolve domains -> persist -> free / public contact
-discovery + POC ranking (QUALIFIED companies only). Paid enrichment and email verification
-are **not called**.
+discovery + email classification + POC ranking -> ZoomInfo enrichment (both QUALIFIED
+companies only). Apollo, Apify enrichment and email verification are **not called**.
 
 ## Planner and source registry
 
@@ -239,13 +240,53 @@ Runs only for `QUALIFIED` companies, strongest hiring first, up to
    "HR Coordinator" is not a COO); "Assistant", "Associate", "Deputy" and "Former"
    titles are excluded. Within a tier: closeness to the roles being hired,
    extraction confidence, a published email, earlier discovery stage.
-5. **Emails** are classified `ROLE` (shared: hr@, careers@, recruiting@, jobs@,
-   info@, dispatch@ ...), `PERSONAL` (a named contact's) or `UNATTRIBUTED`, with
-   `on_company_domain`.
+5. **Emails** are evidence, not trusted contacts. Each keeps `email`, `source`,
+   `source_type`, `email_class`, `confidence`, `evidence_url`, `extraction_method`
+   and `on_company_domain`. Classes:
+   - `PERSONAL`: an individual mailbox on the employer's domain;
+   - `ROLE`: a shared mailbox on the employer's domain (hr@, careers@, info@ ...);
+   - `PORTAL_GENERATED`: on a job-board / ATS / platform host;
+   - `EXTERNAL_UNVERIFIED`: free mail, or the employer's domain is unknown;
+   - `DOMAIN_MISMATCH`: on another domain than the identified employer.
+
+   Only PERSONAL and ROLE count toward `email_status` and `emails`; the rest are
+   kept as low-confidence evidence (`LOW_CONFIDENCE_EMAIL_FOUND` when nothing else
+   was seen). Nothing is deleted for being weak.
 
 Provenance: each contact row keeps its stage, source type, page URL and
 extraction method, plus a `CONTACT` evidence row; each address is a
-`company_email` evidence row with its type, source URL, portal and stage.
+`company_email` evidence row whose `email_type` is its class.
+
+## ZoomInfo enrichment
+
+Runs after public contact discovery, QUALIFIED companies only, strongest hiring
+first, up to `ZOOMINFO_MAX_COMPANIES_PER_RUN`. Built on ZoomInfo's documented
+Enterprise API (`/authenticate`, `/enrich/company`, `/search/contact`,
+`/enrich/contact`); that API is marked as being deprecated by ZoomInfo, and no
+live account has exercised this code. `ZOOMINFO_API_KEY` is `username:password`
+or a pre-issued JWT.
+
+1. **Nothing missing, nothing spent**: skipped when the company already has
+   `CONTACTS_TARGET` named POC contacts with a PERSONAL email, or when ZoomInfo was
+   consulted within `ZOOMINFO_REFRESH_DAYS` (stored ZoomInfo contacts are reused).
+2. **Company match**: with a known domain only a ZoomInfo company on that domain;
+   without one only a single same-name company in the same state. Otherwise
+   `DOMAIN_MISMATCH`, `AMBIGUOUS` or `NO_MATCH`, and nothing is attached. ZoomInfo
+   company facts are stored as evidence; identity and qualification are untouched.
+3. **Contacts**: Contact Search for the POC titles (no emails, no credits), then
+   Contact Enrich (one credit each) for at most
+   `ZOOMINFO_MAX_CONTACT_ENRICH_PER_COMPANY` POC candidates, strongest first, whose
+   email would fill a gap. Previews not enriched still add a named POC.
+4. **Merge**: the same person (same email, ZoomInfo id, or first + last name) is
+   one contact. ZoomInfo fills missing fields and upgrades a weaker email (the
+   replaced one is kept in `replaced_emails`); a PERSONAL public email is never
+   replaced. Ordering: POC tier, email strength, public before ZoomInfo.
+5. **Provenance**: `origin` is `PUBLIC`, `ZOOMINFO` or `PUBLIC+ZOOMINFO`; every
+   ZoomInfo field is in `field_provenance` and a `zoominfo_<field>` evidence row;
+   every API call is an `enrichment_logs` row with endpoint, status and credit
+   cost (records returned: search is free, "no match" and errors charge nothing).
+
+`--stop-at before_enrichment` runs public discovery only.
 
 ## Observability
 

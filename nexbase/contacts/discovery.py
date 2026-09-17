@@ -119,8 +119,9 @@ class ContactDiscoveryReport:
     #: An explicit headcount seen on a page that was fetched for contacts.
     size_evidence: object | None = None
     #: Every address seen on the pages visited, even when it could not be
-    #: attributed to a named person, as ``{email, source_url, source_portal,
-    #: discovery_stage}``. Observed, never guessed; the first sighting is kept.
+    #: attributed to a named person, as ``{email, source, source_type,
+    #: evidence_url, extraction_method, discovery_stage}``. Observed, never
+    #: guessed; the first sighting is kept.
     page_emails: list[dict] = field(default_factory=list)
     #: True when the page budget stopped discovery before it was satisfied.
     budget_exhausted: bool = False
@@ -156,9 +157,10 @@ class ContactDiscoveryReport:
         for email in emails:
             if email not in seen:
                 seen.add(email)
-                self.page_emails.append({"email": email, "source_url": url,
-                                         "source_portal": source_type,
-                                         "discovery_stage": stage})
+                self.page_emails.append({
+                    "email": email, "source": (urlsplit(url).hostname or "").lower() or None,
+                    "source_type": source_type, "evidence_url": url,
+                    "extraction_method": "page_markup", "discovery_stage": stage})
 
 
 class _CountedAccess:

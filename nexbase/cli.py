@@ -166,7 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_p = sub.add_parser("run", help="run the pipeline for a sector and job")
     sector_and_job(run_p)
     run_p.add_argument("--dry-run", action="store_true", help="do not write to the database")
-    run_p.add_argument("--stop-at", choices=["before_contacts"], default=None)
+    run_p.add_argument("--stop-at", choices=["before_contacts", "before_enrichment"],
+                       default=None)
     run_p.add_argument("--linkedin-signal", action="store_true")
     run_p.add_argument("-v", "--verbose", action="store_true")
     run_p.set_defaults(func=cmd_run)

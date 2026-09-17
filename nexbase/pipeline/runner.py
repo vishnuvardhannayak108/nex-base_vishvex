@@ -10,10 +10,12 @@ Single entry point used by the API, the CLI and tests:
     6 Qualify (direct employer, size, industry, hiring signals) and resolve
       official domains
     7 Persist every company, its jobs and its qualification reasons
-    8 Free / public contact discovery + POC ranking, QUALIFIED companies only
+    8 Free / public contact discovery + email classification + POC ranking,
+      QUALIFIED companies only
+    9 ZoomInfo enrichment, QUALIFIED companies only
 
-Paid enrichment and email verification are not executed here. Nothing here
-sends email.
+Apollo, Apify and email verification are not executed here. Nothing here sends
+email.
 
 One :class:`AccessLayer` is shared for the whole run, so the rate limiter and
 the Camoufox budget are genuinely global rather than resetting per company.
@@ -25,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 from nexbase.access.fetcher import AccessLayer
 from nexbase.config import Settings, get_settings
@@ -37,6 +40,8 @@ from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
 from nexbase.discovery.planner import DiscoveryPlan
 from nexbase.discovery.registry import SourceRegistry, build_registry
 from nexbase.email.discovery import EmailDiscovery
+from nexbase.enrichment.zoominfo import ZoomInfoProvider
+from nexbase.enrichment.zoominfo_stage import CompanyEnrichment, ZoomInfoEnrichment
 from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
 from nexbase.pipeline.company_identity import CompanyIdentifier, FreshCompany
 from nexbase.pipeline.dedupe import JobDeduplicator
@@ -120,6 +125,9 @@ class QualifiedLead:
     #: NOT_RUN | COMPLETED | PAGE_BUDGET_EXHAUSTED | SKIPPED_COMPANY_BUDGET |
     #: FAILED. Only QUALIFIED companies are ever searched.
     contact_discovery: str = "NOT_RUN"
+    #: Provider -> what enrichment did for this lead (status, match basis,
+    #: credits, contacts added / upgraded).
+    enrichment: dict = field(default_factory=dict)
     rejection_reasons: list[str] = field(default_factory=list)
     evidence_url: str | None = None
     source_sites: list[str] = field(default_factory=list)
@@ -152,6 +160,7 @@ class PipelineReport:
     size_resolution: dict = field(default_factory=dict)
     domain_resolution: dict = field(default_factory=dict)
     contact_discovery: dict = field(default_factory=dict)
+    zoominfo_enrichment: dict = field(default_factory=dict)
     #: Per-source outcome, so an empty or broken source stays visible
     #: instead of being folded into a single total.
     source_status: dict = field(default_factory=dict)
@@ -185,6 +194,7 @@ class PipelineReport:
             "size_resolution": self.size_resolution,
             "domain_resolution": self.domain_resolution,
             "contact_discovery": self.contact_discovery,
+            "zoominfo_enrichment": self.zoominfo_enrichment,
             "source_status": self.source_status,
             "coverage": self.coverage,
             "qualified_leads": [asdict(lead) for lead in self.qualified],
@@ -213,8 +223,10 @@ class PipelineRunner:
         size_resolver: SizeResolver | None = None,
         domain_resolver=None,
         registry: SourceRegistry | None = None,
+        zoominfo: ZoomInfoProvider | None = None,
     ) -> None:
         self.settings = settings or get_settings()
+        self._zoominfo = zoominfo
         ensure_logging_configured(self.settings.log_level)
         self.log = logger or get_logger("nexbase.pipeline.runner")
         self.repo = repo if repo is not None else SupabaseRepository(settings=self.settings)
@@ -274,7 +286,8 @@ class PipelineRunner:
         """Run the pipeline for ``plan``.
 
         ``raw_jobs`` replaces discovery with already-collected postings.
-        ``stop_at`` may be 'before_contacts'.
+        ``stop_at`` may be 'before_contacts' (no contact discovery, no
+        enrichment) or 'before_enrichment' (contact discovery only).
         """
         run_key = plan.run_key if plan is not None else (
             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -402,6 +415,11 @@ class PipelineRunner:
         if stop_at != "before_contacts":
             with stage(self.log, "contact_discovery", report.stages):
                 self._discover_contacts(qualified, report)
+
+            # --- 9. ZoomInfo enrichment: QUALIFIED only, after public discovery
+            if stop_at != "before_enrichment":
+                with stage(self.log, "zoominfo_enrichment", report.stages):
+                    self._enrich_with_zoominfo(qualified, report)
 
         # --- Reporting ------------------------------------------------------
         report.access = {
@@ -956,16 +974,11 @@ class PipelineRunner:
         ``CONTACTS_MAX_COMPANIES_PER_RUN`` companies are searched; the rest are
         marked SKIPPED_COMPANY_BUDGET.
         """
-        def strength(item):
-            fc = item[0]
-            age = fc.min_age_days
-            return (-fc.hiring_intensity, 99.0 if age is None else age)
-
         stats = {"qualified": len(qualified), "searched": 0, "skipped_budget": 0,
                  "page_budget_exhausted": 0, "failed": 0, "pages_fetched": 0,
                  "contacts": 0, "emails": 0,
                  "company_budget": self.settings.contacts_max_companies_per_run}
-        for index, (fc, lead, company_id) in enumerate(sorted(qualified, key=strength)):
+        for index, (fc, lead, company_id) in enumerate(sorted(qualified, key=_hiring_strength)):
             if index >= self.settings.contacts_max_companies_per_run:
                 lead.contact_discovery = "SKIPPED_COMPANY_BUDGET"
                 stats["skipped_budget"] += 1
@@ -974,6 +987,54 @@ class PipelineRunner:
             self._contacts_for(fc, lead, company_id, report, stats)
         report.contact_discovery = stats
         self.log.info("contact_discovery_complete", **stats)
+
+    # ------------------------------------------------------------------
+    # ZoomInfo enrichment (QUALIFIED companies only, after public discovery)
+    # ------------------------------------------------------------------
+    def _enrich_with_zoominfo(self, qualified, report) -> None:
+        """Consult ZoomInfo for QUALIFIED companies, strongest hiring first.
+
+        At most ``ZOOMINFO_MAX_COMPANIES_PER_RUN`` companies; the rest are
+        SKIPPED_COMPANY_BUDGET. Unconfigured, nothing is called or billed.
+        """
+        provider = self._zoominfo or ZoomInfoProvider(self.settings, self.log)
+        enrichment = ZoomInfoEnrichment(self.repo, self.settings, self.log, provider=provider)
+        statuses: dict[str, int] = {}
+        stats = {"qualified": len(qualified), "credits": 0.0, "contacts_added": 0,
+                 "contacts_upgraded": 0,
+                 "company_budget": self.settings.zoominfo_max_companies_per_run}
+        for index, (fc, lead, company_id) in enumerate(sorted(qualified, key=_hiring_strength)):
+            if index >= self.settings.zoominfo_max_companies_per_run:
+                result = CompanyEnrichment("SKIPPED_COMPANY_BUDGET")
+            else:
+                try:
+                    result = enrichment.enrich_company(fc, lead, company_id)
+                except Exception as exc:
+                    report.append_pitfall(stage="ZOOMINFO", company=lead.company_name,
+                                          reason=str(exc))
+                    result = CompanyEnrichment("FAILED")
+            lead.enrichment["ZOOMINFO"] = result.as_dict()
+            statuses[result.status] = statuses.get(result.status, 0) + 1
+            stats["credits"] += result.credits
+            stats["contacts_added"] += result.contacts_added
+            stats["contacts_upgraded"] += result.contacts_upgraded
+            if result.zoominfo_emails or result.contacts_added or result.contacts_upgraded:
+                self._reclassify_emails(lead, company_id, result.zoominfo_emails)
+        report.zoominfo_enrichment = {**stats, "statuses": statuses}
+        self.log.info("zoominfo_enrichment_complete", **stats, statuses=statuses)
+
+    def _reclassify_emails(self, lead, company_id, zoominfo_emails) -> None:
+        """Classify again with the enriched contacts; persist only new addresses."""
+        seen = {o["email"] for o in lead.observed_emails}
+        emails = EmailDiscovery(self.log).discover(
+            lead.contacts, extra_emails=list(lead.observed_emails) + list(zoominfo_emails),
+            company_domain=lead.domain or None)
+        self._persist_emails(company_id, [o for o in emails.observed if o.email not in seen])
+        lead.emails = emails.preferred
+        lead.email_status = emails.status
+        lead.observed_emails = [o.as_dict() for o in emails.observed]
+        lead.named_contact_emails = [o.as_dict() for o in emails.named]
+        lead.role_mailboxes = list(emails.role)
 
     def _contacts_for(self, fc, lead, company_id, report, stats) -> None:
         jobs = [job for job, _ in fc.fresh_jobs]
@@ -999,8 +1060,8 @@ class PipelineRunner:
 
         # 1. Addresses already on the postings, then 2. those on pages visited.
         posting_emails = [
-            {"email": email, "source_url": job.evidence_url,
-             "source_portal": job.source_site,
+            {"email": email, "source": job.source_site, "source_type": job.source_type,
+             "evidence_url": job.evidence_url, "extraction_method": "job_posting",
              "discovery_stage": DiscoveryStage.SAME_SOURCE.value}
             for job in jobs for email in job.observed_emails or []
         ]
@@ -1071,17 +1132,20 @@ class PipelineRunner:
                 "rank_score": c.rank_score,
                 "discovery_stage": c.discovery_stage,
                 "source_type": c.source_type,
+                "source": (urlsplit(c.url or "").hostname or "").lower() or None,
                 "source_url": c.url,
                 "profile_url": c.profile_url,
                 "extraction": c.raw.get("extraction"),
+                "origin": "PUBLIC",
             })
         return out
 
     def _persist_emails(self, company_id, observed) -> None:
         """Store every observed address as company evidence with its provenance.
 
-        ``email_type`` is ROLE (shared), PERSONAL (a named contact's) or
-        UNATTRIBUTED; the API reads these rows back as the company's emails.
+        ``email_type`` is the email class (PERSONAL, ROLE, PORTAL_GENERATED,
+        EXTERNAL_UNVERIFIED, DOMAIN_MISMATCH); low-confidence classes are kept as
+        evidence. The API reads these rows back as the company's emails.
         """
         for o in observed:
             self.repo.insert_evidence({
@@ -1089,10 +1153,12 @@ class PipelineRunner:
                 "record_id": company_id,
                 "key": "company_email",
                 "value": o.email,
-                "url": o.source_url,
-                "source_type": o.source_portal,
-                "source_priority": int(SourcePriority.PUBLIC_WEB.value),
-                "raw_payload": _json_safe({"email_type": o.kind, **o.as_dict()}),
+                "url": o.evidence_url,
+                "source_type": o.source_type,
+                "source_priority": int(
+                    SourcePriority.PAID_ENRICHMENT.value if o.source_type == "ZOOMINFO"
+                    else SourcePriority.PUBLIC_WEB.value),
+                "raw_payload": _json_safe({"email_type": o.email_class, **o.as_dict()}),
             })
 
     # ------------------------------------------------------------------
@@ -1109,6 +1175,13 @@ class PipelineRunner:
             "breakdown": _json_safe(result.breakdown),
             "source_sites": fc.company.source_sites,
         }
+
+
+def _hiring_strength(item) -> tuple:
+    """Strongest hiring first: more fresh openings, then the freshest posting."""
+    fc = item[0]
+    age = fc.min_age_days
+    return (-fc.hiring_intensity, 99.0 if age is None else age)
 
 
 def _size_label(profile) -> str | None:

@@ -73,21 +73,24 @@ def test_every_observed_email_is_classified_with_provenance():
         [{"name": "Jane Whitfield", "title": "CEO", "email": "jane@acme.com",
           "source_url": "https://acme.com/team", "discovery_stage": "PUBLIC_WEB"}],
         extra_emails=[
-            {"email": "hr@acme.com", "source_url": "https://indeed.com/viewjob?jk=1",
-             "source_portal": "indeed", "discovery_stage": "SAME_SOURCE"},
-            {"email": "mreed@acme.com", "source_url": "https://acme.com/contact",
+            {"email": "hr@acme.com", "evidence_url": "https://indeed.com/viewjob?jk=1",
+             "source": "indeed", "discovery_stage": "SAME_SOURCE"},
+            {"email": "mreed@acme.com", "evidence_url": "https://acme.com/contact",
              "discovery_stage": "PUBLIC_WEB"},
-            {"email": "studio@webagency.com", "source_url": "https://acme.com/",
+            {"email": "studio@webagency.com", "evidence_url": "https://acme.com/",
              "discovery_stage": "PUBLIC_WEB"},
         ],
         company_domain="acme.com",
     )
-    kinds = {o.email: (o.kind, o.on_company_domain, o.source_url) for o in result.observed}
+    kinds = {o.email: (o.email_class, o.contact_name, o.on_company_domain, o.evidence_url)
+             for o in result.observed}
     assert kinds == {
-        "jane@acme.com": ("PERSONAL", True, "https://acme.com/team"),
-        "hr@acme.com": ("ROLE", True, "https://indeed.com/viewjob?jk=1"),
-        "mreed@acme.com": ("UNATTRIBUTED", True, "https://acme.com/contact"),
-        "studio@webagency.com": ("UNATTRIBUTED", False, "https://acme.com/"),
+        "jane@acme.com": ("PERSONAL", "Jane Whitfield", True, "https://acme.com/team"),
+        "hr@acme.com": ("ROLE", None, True, "https://indeed.com/viewjob?jk=1"),
+        # An individual mailbox on the employer's domain with no person beside it.
+        "mreed@acme.com": ("PERSONAL", None, True, "https://acme.com/contact"),
+        # A web agency's address on the employer's page: kept, low confidence.
+        "studio@webagency.com": ("DOMAIN_MISMATCH", None, False, "https://acme.com/"),
     }
     assert result.role == ["hr@acme.com"]
     assert [o.contact_name for o in result.named] == ["Jane Whitfield"]
@@ -354,8 +357,9 @@ def test_page_emails_carry_the_page_they_were_seen_on(settings):
     report = ContactDiscovery(access=access, settings=settings).discover(
         "Acme", None, ["https://www.indeed.com/viewjob?jk=9"], [])
     assert report.page_emails == [{
-        "email": "hr@acme.com", "source_url": "https://www.indeed.com/viewjob?jk=9",
-        "source_portal": "JOB_BOARD", "discovery_stage": "SAME_SOURCE"}]
+        "email": "hr@acme.com", "source": "www.indeed.com", "source_type": "JOB_BOARD",
+        "evidence_url": "https://www.indeed.com/viewjob?jk=9",
+        "extraction_method": "page_markup", "discovery_stage": "SAME_SOURCE"}]
 
 
 def test_the_same_page_is_fetched_once_per_company(settings):

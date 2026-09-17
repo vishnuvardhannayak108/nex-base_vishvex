@@ -246,6 +246,7 @@ def test_every_contact_and_email_keeps_its_provenance(runner, universe, now, rec
 def test_emails_already_on_postings_are_captured_first(settings, recording_repo, make_job, now):
     job = make_job(company="Acme Manufacturing", title="Plant Manager",
                    employees="51 to 200", industry="Manufacturing",
+                   company_website="https://acme-mfg.com",
                    description="Apply to careers@acme-mfg.com or call.",
                    external_id="acme-post")
     runner = PipelineRunner(settings=settings, repo=recording_repo,
@@ -258,7 +259,8 @@ def test_emails_already_on_postings_are_captured_first(settings, recording_repo,
     [row] = [e for e in recording_repo.calls["evidence"] if e.get("key") == "company_email"]
     assert row["raw_payload"]["email_type"] == "ROLE"
     assert row["raw_payload"]["discovery_stage"] == "SAME_SOURCE"
-    assert row["raw_payload"]["source_portal"] == "indeed"
+    assert row["raw_payload"]["source"] == "indeed"
+    assert row["raw_payload"]["extraction_method"] == "job_posting"
     assert row["url"] == job.application_url
 
 
@@ -305,6 +307,7 @@ def test_every_stage_is_timed_and_reported(runner, universe, now):
     assert list(report.stages) == [
         "discovery", "normalization", "job_deduplication", "freshness",
         "company_identification", "qualification", "persistence", "contact_discovery",
+        "zoominfo_enrichment",
     ]
     assert all(s["status"] == "OK" and s["duration_ms"] >= 0 for s in report.stages.values())
     assert report.to_dict()["stages"] == report.stages

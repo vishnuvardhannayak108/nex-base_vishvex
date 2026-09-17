@@ -130,7 +130,8 @@ Engineering status for the Nex-Base delivery, built to the Master Plan
 | Freshness (≤14d) | working |
 | Qualification gate | working, evidence-limited |
 | Contact discovery | working, variable yield |
-| Enrichment (ZoomInfo → Apollo → Apify) | providers exist, **not wired** (Phase 7) |
+| ZoomInfo enrichment | wired, fixture-tested, **no live account** (Phase 7) |
+| Apollo → Apify enrichment | providers exist, **not wired** |
 | Email verification | provider exists, **not wired** (Phase 8) |
 | Export | CSV + `/leads` API |
 | Outreach | **out of scope** — removed in Phase 1 |

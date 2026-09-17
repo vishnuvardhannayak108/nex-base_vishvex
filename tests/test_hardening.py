@@ -1062,10 +1062,11 @@ def test_a_genuinely_dead_host_is_cached_after_the_retry(settings, monkeypatch):
 # ===========================================================================
 # Lead output: email status, provenance, role vs named
 # ===========================================================================
-def _emails(contacts=None, extra=None):
+def _emails(contacts=None, extra=None, domain="acme.com"):
     from nexbase.email.discovery import EmailDiscovery
 
-    return EmailDiscovery().discover(contacts or [], extra_emails=extra or [])
+    return EmailDiscovery().discover(contacts or [], extra_emails=extra or [],
+                                     company_domain=domain)
 
 
 def test_email_status_reflects_what_was_observed():
@@ -1079,6 +1080,9 @@ def test_email_status_reflects_what_was_observed():
         extra=["hr@acme.com", "d.reed@acme.com"]
     ).status == EmailStatus.MULTIPLE_EMAILS_FOUND.value
     assert _emails().status == EmailStatus.NO_PUBLIC_EMAIL_FOUND.value
+    # Without a known employer domain nothing can be counted as the employer's own.
+    assert _emails(extra=["hr@acme.com"], domain=None).status == \
+        EmailStatus.LOW_CONFIDENCE_EMAIL_FOUND.value
 
 
 def test_observed_emails_carry_provenance():
@@ -1088,9 +1092,9 @@ def test_observed_emails_carry_provenance():
         "discovery_stage": "PUBLIC_WEB",
     }])
     observed = result.observed[0]
-    assert observed.source_url == "https://acme.com/team"
+    assert observed.evidence_url == "https://acme.com/team"
     assert observed.contact_name == "Dana Reed" and observed.contact_title == "COO"
-    assert observed.kind == "PERSONAL"
+    assert observed.email_class == "PERSONAL"
     assert observed.verification_status == "PENDING"
     assert result.named and result.named[0].email == "d.reed@acme.com"
 
@@ -1100,7 +1104,7 @@ def test_role_mailbox_is_never_attributed_to_a_person():
     result = _emails(contacts=[{"email": "hr@acme.com", "name": "Dana Reed",
                                 "title": "COO"}])
     observed = result.observed[0]
-    assert observed.kind == "ROLE"
+    assert observed.email_class == "ROLE"
     assert observed.contact_name is None and observed.contact_title is None
     assert result.named == []
     assert result.role == ["hr@acme.com"]

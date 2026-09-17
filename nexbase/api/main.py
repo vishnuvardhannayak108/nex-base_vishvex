@@ -115,7 +115,7 @@ class RunRequest(BaseModel):
     @field_validator("stop_at")
     @classmethod
     def _check_stop_at(cls, value):
-        allowed = {None, "before_contacts"}
+        allowed = {None, "before_contacts", "before_enrichment"}
         if value not in allowed:
             raise ValueError(f"stop_at must be one of {sorted(a for a in allowed if a)}")
         return value

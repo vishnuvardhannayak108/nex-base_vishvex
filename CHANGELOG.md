@@ -8,6 +8,51 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Live handler smoke + fixes (2026-09-17)
+
+Every non-Apify discovery handler (5 direct boards, 10 ATS slices) run live through
+`scripts/live_smoke.py --skip-contacts`, fixed, and re-run until clean. Discovery only:
+no enrichment, verification or outreach. Apify sources stay off (no token). Reports:
+`reports/handler_smoke/run1-5.json`.
+
+| Round | Query | Result |
+|---|---|---|
+| 1 | warehouse associate, USA | 15/15 ran, no errors; malformed email `%e2%80%9c@jackmorton.com` (Greenhouse) |
+| 2 | warehouse associate, USA | clean; SmartRecruiters 131 dated but only 44 fresh (stale rows passing the slice filter) |
+| 3 | forklift operator, Ohio | no errors; Talent.com 1 result for all of Ohio |
+| 4 | warehouse associate, USA | SmartRecruiters 44/44 fresh; malformed email `-hr@fujifilm.com` (Indeed) |
+| 5 | forklift operator, Ohio | clean; Talent.com 77 |
+| check | Indeed, warehouse associate, USA | `fcdi-hr@fujifilm.com` read whole, no malformed emails |
+
+EMPTY is not an error: Lever, Ashby, Breezy, JazzHR, Recruitee (and most ATS in Ohio) have
+no matching postings. Probed with "manager": 272 / 204 / 37 / 20 / 19 jobs.
+
+### Fixed
+
+- **ATS slice freshness** (`discovery/ats_discovery.py`): `pd.to_datetime` inferred the date
+  format from the first row; slices mixing `...:19+00:00` and `...:19.378+00:00` turned the
+  rest into NaT, which passed as undated. SmartRecruiters: 75k of 115k US rows, postings up
+  to 1,011 days old. Now `format="ISO8601"`: every non-null `posted_at` in all 10 slices parses.
+- **Talent.com state searches** (`discovery/board_scrapers.py`): without `radius` a state is one
+  point with a 15 mi radius. `radius` is in km and accepts only 10 / 25 / 50 / 100; now
+  `radius=100` (60 mi, the widest). Ohio forklift operator: 1 -> 77-83 jobs, all in Ohio;
+  nationwide unchanged.
+- **Percent-encoded mailto fragments** (`core/models.py`, `email/discovery.py`): descriptions
+  are URL-decoded before extraction; a percent-encoded address is rejected.
+- **Markdown-escaped addresses** (`core/models.py`, `email/discovery.py`): `\-` escapes undone
+  before extraction; an address whose mailbox starts or ends with punctuation (a fragment,
+  including JobSpy's own `emails` column) is dropped.
+
+### Observed, not changed
+
+- Indeed matches the term anywhere in the description ("forklift operator", Ohio: 4 of 50
+  titles mention forklifts, all 50 descriptions do). That is Indeed's search, not a defect.
+- JazzHR includes test postings (`[TEST] Product Manager`); qualification decides.
+
+Tests: 980 passed (976 before): regressions for all four fixes.
+
+---
+
 ## Phase 8 — POC ranking, email verification, Final Lead, export (2026-09-17)
 
 Master Plan Phase 8: POC priority ranking (P1-P4), Quality > Quota, email

@@ -1,0 +1,395 @@
+{
+  "generated_at": "2026-09-17T10:24:47.110115+00:00",
+  "query": {
+    "term": "warehouse associate",
+    "location": "USA",
+    "hours_old": 336
+  },
+  "totals": {
+    "jobs_returned": 597,
+    "normalized": 595,
+    "screened_out": 2,
+    "duplicate_jobs": 4,
+    "stale_or_undated": 102,
+    "companies": 368,
+    "fresh_jobs_in_companies": 489,
+    "duplicate_rate": 0.007,
+    "companies_with_domain": 33,
+    "raw_observed_emails": [
+      "%e2%80%9c@jackmorton.com",
+      "ada.accommodation@bldr.com",
+      "ada@chugachgov.com",
+      "anamaria.giangarra@ct.gov",
+      "ceicareers@mastec.com",
+      "das.shrm@ct.gov",
+      "fsc.talentacquisition@fedex.com",
+      "hr@alliahealth.co",
+      "hr@onececo.com",
+      "hrcompliance@cornerstone-bb.com",
+      "ismith@bcswan.net",
+      "jobaccomodation@jackmorton.com",
+      "jobaccomodations@jackmorton.com",
+      "people@uncommongoods.com",
+      "recruiting@84lumber.com",
+      "talent@myfbm.com"
+    ]
+  },
+  "contact_page_discovery": {
+    "companies_sampled": 0,
+    "pages_fetched": 0,
+    "pages_blocked": 0,
+    "emails": [],
+    "named_contacts": 0
+  },
+  "access": {
+    "scrapling_pages": 45,
+    "camoufox_fallbacks": 0,
+    "pages_blocked": 0,
+    "robots_blocked": 0,
+    "ssrf_blocked": 0,
+    "camoufox_budget": 25
+  },
+  "sources": [
+    {
+      "source": "direct:indeed",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 50,
+      "dated_jobs": 50,
+      "fresh_jobs": 47,
+      "with_company_name": 48,
+      "with_domain": 40,
+      "with_description": 50,
+      "with_employee_count": 31,
+      "with_industry": 13,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 0.96,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "ada.accommodation@bldr.com",
+        "ada@chugachgov.com",
+        "anamaria.giangarra@ct.gov",
+        "ceicareers@mastec.com",
+        "das.shrm@ct.gov",
+        "hr@alliahealth.co",
+        "hr@onececo.com",
+        "ismith@bcswan.net",
+        "recruiting@84lumber.com",
+        "talent@myfbm.com"
+      ],
+      "runtime_seconds": 2.14
+    },
+    {
+      "source": "direct:linkedin",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 50,
+      "dated_jobs": 41,
+      "fresh_jobs": 41,
+      "with_company_name": 50,
+      "with_domain": 2,
+      "with_description": 50,
+      "with_employee_count": 0,
+      "with_industry": 50,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 0.82,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "fsc.talentacquisition@fedex.com",
+        "jobs@cesco.com"
+      ],
+      "runtime_seconds": 70.0
+    },
+    {
+      "source": "direct:simplyhired",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 28,
+      "dated_jobs": 28,
+      "fresh_jobs": 28,
+      "with_company_name": 28,
+      "with_domain": 1,
+      "with_description": 10,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 0.357
+      },
+      "raw_observed_emails": [
+        "people@uncommongoods.com"
+      ],
+      "runtime_seconds": 26.83
+    },
+    {
+      "source": "direct:talent_com",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 104,
+      "dated_jobs": 104,
+      "fresh_jobs": 104,
+      "with_company_name": 104,
+      "with_domain": 0,
+      "with_description": 104,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 13.97
+    },
+    {
+      "source": "direct:postjobfree",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 224,
+      "dated_jobs": 224,
+      "fresh_jobs": 219,
+      "with_company_name": 224,
+      "with_domain": 0,
+      "with_description": 224,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 51.41
+    },
+    {
+      "source": "ats:greenhouse",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 4,
+      "dated_jobs": 4,
+      "fresh_jobs": 4,
+      "with_company_name": 4,
+      "with_domain": 1,
+      "with_description": 4,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "%e2%80%9c@jackmorton.com",
+        "jobaccomodation@jackmorton.com",
+        "jobaccomodations@jackmorton.com"
+      ],
+      "runtime_seconds": 5.48
+    },
+    {
+      "source": "ats:lever",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.42
+    },
+    {
+      "source": "ats:ashby",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.55
+    },
+    {
+      "source": "ats:workable",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 2,
+      "dated_jobs": 2,
+      "fresh_jobs": 2,
+      "with_company_name": 2,
+      "with_domain": 0,
+      "with_description": 1,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 0.5
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 2.2
+    },
+    {
+      "source": "ats:smartrecruiters",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 131,
+      "dated_jobs": 131,
+      "fresh_jobs": 44,
+      "with_company_name": 131,
+      "with_domain": 10,
+      "with_description": 131,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [
+        "careers@conti-na.com",
+        "hrcompliance@cornerstone-bb.com",
+        "notifications@smartrecruiters.com"
+      ],
+      "runtime_seconds": 6.42
+    },
+    {
+      "source": "ats:bamboohr",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 3,
+      "dated_jobs": 3,
+      "fresh_jobs": 3,
+      "with_company_name": 3,
+      "with_domain": 0,
+      "with_description": 3,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 2.3
+    },
+    {
+      "source": "ats:breezy",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.02
+    },
+    {
+      "source": "ats:jazzhr",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.33
+    },
+    {
+      "source": "ats:recruitee",
+      "outcome": "EMPTY",
+      "error": null,
+      "jobs_returned": 0,
+      "dated_jobs": 0,
+      "fresh_jobs": 0,
+      "with_company_name": 0,
+      "with_domain": 0,
+      "with_description": 0,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 0,
+        "company": 0,
+        "date": 0,
+        "description": 0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.0
+    },
+    {
+      "source": "ats:paylocity",
+      "outcome": "SUCCESS",
+      "error": null,
+      "jobs_returned": 1,
+      "dated_jobs": 1,
+      "fresh_jobs": 1,
+      "with_company_name": 1,
+      "with_domain": 0,
+      "with_description": 1,
+      "with_employee_count": 0,
+      "with_industry": 0,
+      "extraction_completeness": {
+        "title": 1.0,
+        "company": 1.0,
+        "date": 1.0,
+        "description": 1.0
+      },
+      "raw_observed_emails": [],
+      "runtime_seconds": 1.86
+    }
+  ],
+  "runtime_seconds": 189.42,
+  "note": "Discovery only. No enrichment, no verification, no outreach."
+}

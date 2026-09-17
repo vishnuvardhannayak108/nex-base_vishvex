@@ -67,8 +67,15 @@ EMAIL_CLASS_STRENGTH = {
 }
 
 
+_PERCENT_ENCODED = re.compile(r"%[0-9a-fA-F]{2}")
+
+
 def _valid(email: str) -> bool:
-    if not _EMAIL_RE.fullmatch(email):
+    local = email.split("@", 1)[0]
+    if (not _EMAIL_RE.fullmatch(email) or _PERCENT_ENCODED.search(email)
+            or not (local[:1].isalnum() and local[-1:].isalnum())):
+        # Percent-encoding or a leading / trailing "-" or "." is a fragment of a
+        # longer token (undecoded URL, Markdown escape), not a mailbox.
         return False
     domain = email.rsplit("@", 1)[-1].lower()
     if domain in _JUNK_DOMAINS:

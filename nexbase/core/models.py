@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+from urllib.parse import unquote
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -74,7 +75,7 @@ class RawJob:
         seen: dict[str, None] = {}
         for email in self.observed_emails or []:
             address = str(email).strip().lower()
-            if address:
+            if _plausible_address(address):
                 seen.setdefault(address, None)
         for address in extract_emails_from_text(self.description):
             seen.setdefault(address, None)
@@ -151,20 +152,37 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _NOT_EMAIL_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 
 
+#: Markdown backslash escapes. Indeed descriptions arrive as Markdown, so
+#: ``fcdi\-hr@fujifilm.com`` was cut to ``-hr@fujifilm.com`` (live 2026-09-17).
+_MARKDOWN_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!])")
+
+
+def _plausible_address(address: str) -> bool:
+    """A literal address whose mailbox starts and ends with a letter or digit.
+
+    A leading or trailing ``-`` / ``.`` / ``%`` is a fragment cut from a longer
+    token (JobSpy's own ``emails`` column does this), never a mailbox to keep.
+    """
+    local = address.split("@", 1)[0]
+    return bool(address and "@" in address and local[:1].isalnum() and local[-1:].isalnum())
+
+
 def extract_emails_from_text(text: str | None) -> list[str]:
     """Explicit email addresses published in a block of text, deduplicated.
 
     Case is normalised so the same address written two ways counts once. HTML
-    entities are decoded first, because descriptions arrive both as plain text
-    and as HTML depending on the source.
+    entities and percent-encoding are decoded first, because descriptions arrive
+    as plain text, HTML or Markdown with ``mailto:`` links: a live Greenhouse
+    posting's ``mailto:%E2%80%9C@jackmorton.com`` (a quoted domain notice, not an
+    address) was stored as the address ``%e2%80%9c@jackmorton.com``.
     """
     if not text:
         return []
-    decoded = html.unescape(str(text))
+    decoded = _MARKDOWN_ESCAPE.sub(r"\1", unquote(html.unescape(str(text))))
     seen: dict[str, None] = {}
     for match in _EMAIL_RE.findall(decoded):
         address = match.strip().lower().rstrip(".,;:)")
-        if address.endswith(_NOT_EMAIL_SUFFIXES):
+        if address.endswith(_NOT_EMAIL_SUFFIXES) or not _plausible_address(address):
             continue
         seen.setdefault(address, None)
     return list(seen)

@@ -254,6 +254,27 @@ def test_a_cached_slice_is_read_as_us_rows_inside_the_window(tmp_path, monkeypat
     assert "raw" not in frame.columns, "unused columns are never read"
 
 
+def test_mixed_iso_timestamp_formats_are_all_parsed_before_the_window(tmp_path):
+    """SmartRecruiters mixes fractional and whole-second timestamps in one slice."""
+    import pandas as pd
+
+    from nexbase.discovery.ats_discovery import ATSSliceStore
+
+    now = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    base = {"title": "Warehouse Associate", "ats_type": "greenhouse", "location": "OH",
+            "country_iso": "US", "url": "https://x", "raw": "{}"}
+    rows = [
+        {**base, "global_id": "1", "company": "Old", "posted_at": "2023-12-10T00:32:19+00:00"},
+        {**base, "global_id": "2", "company": "OldFraction",
+         "posted_at": "2026-08-12T03:17:09.378+00:00"},
+        {**base, "global_id": "3", "company": "Fresh", "posted_at": "2026-09-15T08:00:00.5+00:00"},
+        {**base, "global_id": "4", "company": "FreshNoTz", "posted_at": "2026-09-14T00:00:00"},
+    ]
+    pd.DataFrame(rows).to_parquet(tmp_path / f"greenhouse-{'a' * 16}.parquet")
+    frame = ATSSliceStore(tmp_path, 14).load("greenhouse", _manifest(len(rows)), now=now)
+    assert sorted(frame["company"]) == ["Fresh", "FreshNoTz"]
+
+
 class _Stream:
     def __init__(self, body):
         self.body = body

@@ -325,6 +325,7 @@ def test_talent_com_search_url_paginates():
 
     url = TalentComDiscovery().search_url("warehouse associate", "Columbus, OH", page=2)
     assert "talent.com/jobs" in url and "p=2" in url and "warehouse+associate" in url
+    assert "radius=100" in url, "a state search is otherwise a 15 mi circle"
 
 
 def test_enabled_board_scrapers_are_the_verified_ones():

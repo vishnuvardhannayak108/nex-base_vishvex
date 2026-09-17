@@ -631,8 +631,11 @@ class TalentComDiscovery(BoardScraper):
     config = BoardConfig(
         site="talent_com",
         base_url="https://www.talent.com",
+        # radius is in km and accepts only 10 / 25 / 50 / 100 (5-60 mi); without it
+        # a state is one point with a 15 mi radius. Live 2026-09-17, "forklift
+        # operator" in Ohio: 1 result without it, 20 across Ohio with 100.
         search_template=(
-            "https://www.talent.com/jobs?k={term}&l={location}&p={page}"
+            "https://www.talent.com/jobs?k={term}&l={location}&radius=100&p={page}"
         ),
         date_template="&date={days}",
         no_results_markers=("no results for",),

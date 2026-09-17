@@ -137,7 +137,12 @@ class ATSSliceStore:
         ).to_pandas()
         us_rows = len(frame)
         if "posted_at" in frame:
-            posted = pd.to_datetime(frame["posted_at"], utc=True, errors="coerce")
+            # ISO8601, not an inferred format: slices mix "...:19+00:00" and
+            # "...:19.378+00:00". Inferred from the first row, the rest became NaT and
+            # passed as undated - live 2026-09-17, 75k of 115k SmartRecruiters US rows,
+            # up to 1,011 days old.
+            posted = pd.to_datetime(frame["posted_at"], utc=True, errors="coerce",
+                                    format="ISO8601")
             cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=self.max_age_days)
             frame = frame[posted.isna() | (posted >= cutoff)].reset_index(drop=True)
         self.log.info("ats_slice_read", ats=name, us_rows=us_rows, fresh_or_undated=len(frame))

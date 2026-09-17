@@ -581,3 +581,37 @@ def test_cards_nested_inside_an_unclosed_site_header_are_read():
         <p class="title-position">Chief Executive Officer &amp; President</p></a>
     </article></div></body></html>"""
     assert _pairs(html) == [("Andy Dupuy", "Chief Executive Officer & President", 1)]
+
+
+# ===========================================================================
+# Live handler smoke 2026-09-17: percent-encoded mailto fragments
+# ===========================================================================
+def test_a_percent_encoded_mailto_fragment_is_not_an_address():
+    """Greenhouse (Jack Morton) published a quoted domain notice as a mailto link."""
+    from nexbase.core.models import extract_emails_from_text
+
+    text = ("offers only come from an email address [\u201c@jackmorton.com]"
+            "(mailto:%E2%80%9C@jackmorton.com)\u201d. Contact "
+            "[jobs@jackmorton.com](mailto:jobs%40jackmorton.com)")
+    assert extract_emails_from_text(text) == ["jobs@jackmorton.com"]
+
+
+def test_email_discovery_rejects_percent_encoded_addresses():
+    from nexbase.email.discovery import EmailDiscovery
+
+    found = EmailDiscovery().discover([], extra_emails=[
+        {"email": "%e2%80%9c@jackmorton.com", "source": "greenhouse"},
+        {"email": "jobs@jackmorton.com", "source": "greenhouse"}], company_domain="jackmorton.com")
+    assert [o.email for o in found.observed] == ["jobs@jackmorton.com"]
+
+
+def test_markdown_escaped_addresses_are_read_whole_and_fragments_dropped():
+    """Indeed Markdown: ``fcdi\\-hr@fujifilm.com``; JobSpy's column held ``-hr@fujifilm.com``."""
+    from nexbase.core.models import RawJob, extract_emails_from_text
+
+    text = r"direct your inquiries to our HR Department (fcdi\-hr@fujifilm.com)."
+    assert extract_emails_from_text(text) == ["fcdi-hr@fujifilm.com"]
+    job = RawJob(source_type="JOB_BOARD", source_priority=2, source_site="indeed",
+                 external_id="1", title="Warehouse Associate", company_name="Fujifilm",
+                 description=text, observed_emails=["-hr@fujifilm.com", "jobs.@x.com"])
+    assert job.observed_emails == ["fcdi-hr@fujifilm.com"]

@@ -351,3 +351,38 @@ def test_404_keeps_host_healthy(monkeypatch, settings):
     for path in ("/leadership", "/team", "/about", "/company", "/staff"):
         layer.fetch(f"https://alive.example{path}")
     assert layer._breaker.is_open("https://alive.example/x") is False
+
+
+def test_a_404_with_a_full_error_page_is_not_content(monkeypatch, settings):
+    """Live smoke 2026-09-17: real 404 pages have bodies and were read as pages."""
+    layer = AccessLayer(settings=settings)
+    layer.respect_robots = False
+    layer._url_resolver = lambda host: ["93.184.216.34"]
+    body = "<html><title>Page not found</title><body>" + "Sorry, that page moved. " * 60 + "</body></html>"
+    monkeypatch.setattr(layer, "_scrapling_get", lambda url, alternate=False: FakePage(body, status=404))
+    page = layer.fetch("https://acme.com/team")
+    assert page.error == "NOT_FOUND"
+    assert page.ok is False
+
+
+def test_an_error_status_page_with_a_body_is_not_ok():
+    """A 409 Cloudflare 'DNS resolution error' page must not be read as the site."""
+    from nexbase.access.fetcher import FetchedPage
+
+    body = "<html><title>DNS resolution error | Cloudflare</title>" + "x" * 5000 + "</html>"
+    assert FetchedPage("https://acme.com/", 409, body, "t", "SCRAPLING", False).ok is False
+    assert FetchedPage("https://acme.com/", 500, body, "t", "SCRAPLING", False).ok is False
+    assert FetchedPage("https://acme.com/", 200, body, "t", "SCRAPLING", False).ok is True
+
+
+def test_a_small_sitemap_or_json_document_is_not_blocked():
+    sitemap = ('<?xml version="1.0" encoding="UTF-8"?><sitemapindex>'
+               '<sitemap><loc>https://acme.com/pages-sitemap.xml</loc></sitemap></sitemapindex>')
+    assert looks_blocked(200, sitemap) is False
+    # As Scrapling actually returns it (live, rdgrahamelectric.com).
+    wrapped = ('<html><body><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+               '<sitemap><loc>https://acme.com/blog-posts-sitemap.xml</loc></sitemap>'
+               '</sitemapindex></body></html>')
+    assert looks_blocked(200, wrapped) is False
+    assert looks_blocked(200, '[{"name_value": "careers.acme.com"}]') is False
+    assert looks_blocked(403, sitemap) is True

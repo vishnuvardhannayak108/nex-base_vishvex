@@ -1,0 +1,2664 @@
+{
+ "generated_at": "2026-09-17",
+ "description": "Phase 6 live smoke: Indeed/JobSpy sample (1 nationwide call per combo, 15 combos, 750 postings), 3 QUALIFIED companies searched by the real runner with an instrumented Access Layer and a recording repository (nothing written to Supabase). before = first run; after = final run with the smoke fixes.",
+ "qualified_yield_by_combo": {
+  "Construction/Estimator": 2,
+  "Construction/Construction Manager": 2,
+  "other 13 combos": 0
+ },
+ "before": {
+  "elapsed_seconds": 289.7,
+  "raw_jobs": 100,
+  "postings_with_emails": 7,
+  "posting_emails": [
+   "careers@buildwithdcbg.com",
+   "cms.disabilityrescen@illinois.gov",
+   "dot.contacthr@illinois.gov",
+   "erica@ncountylandscape.com",
+   "hr@lesker.com",
+   "recruiting@bakerroofing.com"
+  ],
+  "verdicts": {
+   "QUALIFIED": [
+    "Brown and Root Industrial Services",
+    "Griffith Company",
+    "R.D. Graham Electric, LLC"
+   ],
+   "NEEDS_REVIEW": [
+    "Phoenix Loss Control",
+    "TechniCraft Collision Repair Experts",
+    "MK Consulting Group",
+    "I-Grace",
+    "CMG Services LLC",
+    "HILLER COMPANIES",
+    "KR Painting, LLC",
+    "PennEnergy Resources LLC.",
+    "Top Cut Lawn Care",
+    "Tri-City Glass",
+    "West Tech Energy",
+    "DC Building Group",
+    "Weil Group, Inc",
+    "North County Landscape Co.",
+    "Pessoa Construction Company",
+    "Project Solutions Inc."
+   ],
+   "REJECTED": 22
+  },
+  "contact_stage_called_for": [
+   [
+    "Brown and Root Industrial Services",
+    "QUALIFIED"
+   ],
+   [
+    "Griffith Company",
+    "QUALIFIED"
+   ],
+   [
+    "R.D. Graham Electric, LLC",
+    "QUALIFIED"
+   ]
+  ],
+  "contact_discovery_report": {
+   "qualified": 3,
+   "searched": 3,
+   "skipped_budget": 0,
+   "page_budget_exhausted": 1,
+   "failed": 0,
+   "pages_fetched": 76,
+   "contacts": 0,
+   "emails": 2,
+   "company_budget": 6
+  },
+  "companies": [
+   {
+    "company": "Brown and Root Industrial Services",
+    "website": "https://www.brownandroot.com",
+    "contact_discovery": "PAGE_BUDGET_EXHAUSTED",
+    "discovery_stages": [],
+    "pages_fetched": 30,
+    "pages_ok": 25,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 2,
+      "ok": 2
+     },
+     "employer_page": {
+      "fetched": 22,
+      "ok": 22
+     },
+     "other:recruiting.adp.com": {
+      "fetched": 5,
+      "ok": 0
+     }
+    },
+    "errors": {
+     "No module named 'camoufox'": 3,
+     "HOST_CIRCUIT_OPEN": 2
+    },
+    "engines": {
+     "SCRAPLING": 28,
+     "NONE": 2
+    },
+    "contacts": [],
+    "observed_emails": [],
+    "email_status": "NO_PUBLIC_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225799206&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225799206",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225799206&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225799206",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 2284,
+      "seconds": 9.5
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844100&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844100",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844100&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844100",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 12923,
+      "seconds": 3.58
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844900&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844900",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844900&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844900",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 12916,
+      "seconds": 4.41
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225857006&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225857006",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225857006&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225857006",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.0
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225832806&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225832806",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225832806&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225832806",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.02
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.indeed.com/cmp/Brown-and-Root-Industrial-Services",
+      "final_url": "https://www.indeed.com/cmp/Brown-and-Root-Industrial-Services",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 465880,
+      "seconds": 1.16
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com",
+      "final_url": "https://www.brownandroot.com",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 394335,
+      "seconds": 5.76
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/what-we-do/procure-build/project-construction-management/",
+      "final_url": "https://www.brownandroot.com/what-we-do/procure-build/project-construction-management/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 136753,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/",
+      "final_url": "https://www.brownandroot.com/who-we-are/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 137378,
+      "seconds": 5.56
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/history/",
+      "final_url": "https://www.brownandroot.com/who-we-are/history/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 148510,
+      "seconds": 3.25
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/mission-values/",
+      "final_url": "https://www.brownandroot.com/who-we-are/mission-values/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 144819,
+      "seconds": 2.92
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/leadership/",
+      "final_url": "https://www.brownandroot.com/leadership/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 134074,
+      "seconds": 2.69
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/vision-for-the-future/",
+      "final_url": "https://www.brownandroot.com/who-we-are/vision-for-the-future/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 135425,
+      "seconds": 2.88
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/leadership",
+      "final_url": "https://www.brownandroot.com/leadership",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 134074,
+      "seconds": 4.44
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/team",
+      "final_url": "https://www.brownandroot.com/team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 3.61
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/our-team",
+      "final_url": "https://www.brownandroot.com/our-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 14.48
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/management",
+      "final_url": "https://www.brownandroot.com/management",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 3.73
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/about-us",
+      "final_url": "https://www.brownandroot.com/about-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 2.86
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/about",
+      "final_url": "https://www.brownandroot.com/about",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 137378,
+      "seconds": 3.7
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/company",
+      "final_url": "https://www.brownandroot.com/company",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 2.78
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are",
+      "final_url": "https://www.brownandroot.com/who-we-are",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 137378,
+      "seconds": 5.64
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/staff",
+      "final_url": "https://www.brownandroot.com/staff",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 4.34
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/contact",
+      "final_url": "https://www.brownandroot.com/contact",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 169139,
+      "seconds": 5.75
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/contact-us",
+      "final_url": "https://www.brownandroot.com/contact-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 5.09
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/",
+      "final_url": "https://www.brownandroot.com/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 394335,
+      "seconds": 11.09
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/leadership-team",
+      "final_url": "https://www.brownandroot.com/leadership-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 9.92
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/our-people",
+      "final_url": "https://www.brownandroot.com/our-people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 4.11
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/people",
+      "final_url": "https://www.brownandroot.com/people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 3.33
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/executive-team",
+      "final_url": "https://www.brownandroot.com/executive-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 3.72
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/meet-the-team",
+      "final_url": "https://www.brownandroot.com/meet-the-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 123366,
+      "seconds": 3.64
+     }
+    ]
+   },
+   {
+    "company": "Griffith Company",
+    "website": "http://www.griffithcompany.net",
+    "contact_discovery": "COMPLETED",
+    "discovery_stages": [],
+    "pages_fetched": 25,
+    "pages_ok": 25,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 2,
+      "ok": 2
+     },
+     "employer_page": {
+      "fetched": 19,
+      "ok": 19
+     },
+     "employer_sitemap": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "other:crt.sh": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "other:griffithcareers.applytojob.com": {
+      "fetched": 1,
+      "ok": 1
+     }
+    },
+    "errors": {},
+    "engines": {
+     "SCRAPLING": 25
+    },
+    "contacts": [],
+    "observed_emails": [
+     {
+      "email": "mail@griffithcompany.net",
+      "kind": "ROLE",
+      "source_url": "https://www.indeed.com/cmp/Griffith-Company",
+      "source_portal": "JOB_BOARD",
+      "discovery_stage": "OTHER_SOURCE",
+      "contact_name": null,
+      "contact_title": null,
+      "on_company_domain": true,
+      "verification_status": "PENDING"
+     }
+    ],
+    "email_status": "ROLE_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "Griffith Company",
+      "url": "https://griffithcareers.applytojob.com/apply/hQB0AnOgQp/Estimator-Landscape-Division?source=INDE&~",
+      "final_url": "https://griffithcareers.applytojob.com/apply/hQB0AnOgQp/Estimator-Landscape-Division?source=INDE&~",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 152642,
+      "seconds": 2.17
+     },
+     {
+      "company": "Griffith Company",
+      "url": "https://www.indeed.com/cmp/Griffith-Company",
+      "final_url": "https://www.indeed.com/cmp/Griffith-Company",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 360719,
+      "seconds": 0.69
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net",
+      "final_url": "http://www.griffithcompany.net",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 0.67
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/leadership",
+      "final_url": "http://www.griffithcompany.net/leadership",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.98
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/team",
+      "final_url": "http://www.griffithcompany.net/team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.98
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/our-team",
+      "final_url": "http://www.griffithcompany.net/our-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.25
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/management",
+      "final_url": "http://www.griffithcompany.net/management",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.7
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about-us",
+      "final_url": "http://www.griffithcompany.net/about-us",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.98
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about",
+      "final_url": "http://www.griffithcompany.net/about",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.03
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/company",
+      "final_url": "http://www.griffithcompany.net/company",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.94
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/who-we-are",
+      "final_url": "http://www.griffithcompany.net/who-we-are",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/staff",
+      "final_url": "http://www.griffithcompany.net/staff",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.05
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/contact",
+      "final_url": "http://www.griffithcompany.net/contact",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.95
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/contact-us",
+      "final_url": "http://www.griffithcompany.net/contact-us",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.03
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/",
+      "final_url": "http://www.griffithcompany.net/",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.03
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/leadership-team",
+      "final_url": "http://www.griffithcompany.net/leadership-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.92
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/our-people",
+      "final_url": "http://www.griffithcompany.net/our-people",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.0
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/people",
+      "final_url": "http://www.griffithcompany.net/people",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.03
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/executive-team",
+      "final_url": "http://www.griffithcompany.net/executive-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.94
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/meet-the-team",
+      "final_url": "http://www.griffithcompany.net/meet-the-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.0
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/careers",
+      "final_url": "http://www.griffithcompany.net/careers",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.01
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/contact/",
+      "final_url": "http://www.griffithcompany.net/contact/",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.99
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about/leadership",
+      "final_url": "http://www.griffithcompany.net/about/leadership",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 1.99
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/sitemap.xml",
+      "final_url": "http://www.griffithcompany.net/sitemap.xml",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 6000,
+      "seconds": 2.05
+     },
+     {
+      "company": "Griffith Company",
+      "url": "https://crt.sh/?q=%25.griffithcompany.net&output=json",
+      "final_url": "https://crt.sh/?q=%25.griffithcompany.net&output=json",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 96226,
+      "seconds": 16.24
+     }
+    ]
+   },
+   {
+    "company": "R.D. Graham Electric, LLC",
+    "website": "http://www.rdgrahamelectric.com",
+    "contact_discovery": "COMPLETED",
+    "discovery_stages": [],
+    "pages_fetched": 25,
+    "pages_ok": 23,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 2,
+      "ok": 2
+     },
+     "employer_page": {
+      "fetched": 19,
+      "ok": 19
+     },
+     "employer_sitemap": {
+      "fetched": 1,
+      "ok": 0
+     },
+     "other:crt.sh": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "other:recruiting.adp.com": {
+      "fetched": 1,
+      "ok": 0
+     }
+    },
+    "errors": {
+     "HOST_CIRCUIT_OPEN": 1,
+     "No module named 'camoufox'": 1
+    },
+    "engines": {
+     "NONE": 1,
+     "SCRAPLING": 24
+    },
+    "contacts": [],
+    "observed_emails": [
+     {
+      "email": "estimating@rdgrahamelectric.com",
+      "kind": "ROLE",
+      "source_url": "http://www.rdgrahamelectric.com",
+      "source_portal": "COMPANY_WEBSITE",
+      "discovery_stage": "PUBLIC_WEB",
+      "contact_name": null,
+      "contact_title": null,
+      "on_company_domain": true,
+      "verification_status": "PENDING"
+     }
+    ],
+    "email_status": "ROLE_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225833500&c=2191831&d=ExternalCareerSite&rb=INDEED&idUnique=5001225833500",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225833500&c=2191831&d=ExternalCareerSite&rb=INDEED&idUnique=5001225833500",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.06
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.indeed.com/cmp/R.d.-Graham-Electric,-LLC",
+      "final_url": "https://www.indeed.com/cmp/R.d.-Graham-Electric,-LLC",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 346263,
+      "seconds": 0.67
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com",
+      "final_url": "http://www.rdgrahamelectric.com",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1234137,
+      "seconds": 1.28
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/leadership",
+      "final_url": "http://www.rdgrahamelectric.com/leadership",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885410,
+      "seconds": 4.09
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/team",
+      "final_url": "http://www.rdgrahamelectric.com/team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885318,
+      "seconds": 12.33
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/our-team",
+      "final_url": "http://www.rdgrahamelectric.com/our-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885498,
+      "seconds": 2.49
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/management",
+      "final_url": "http://www.rdgrahamelectric.com/management",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885425,
+      "seconds": 2.61
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about-us",
+      "final_url": "http://www.rdgrahamelectric.com/about-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885442,
+      "seconds": 2.53
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about",
+      "final_url": "http://www.rdgrahamelectric.com/about",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1115521,
+      "seconds": 0.67
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/company",
+      "final_url": "http://www.rdgrahamelectric.com/company",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885399,
+      "seconds": 3.75
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/who-we-are",
+      "final_url": "http://www.rdgrahamelectric.com/who-we-are",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885445,
+      "seconds": 2.45
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/staff",
+      "final_url": "http://www.rdgrahamelectric.com/staff",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885304,
+      "seconds": 2.62
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/contact",
+      "final_url": "http://www.rdgrahamelectric.com/contact",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885430,
+      "seconds": 2.56
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/contact-us",
+      "final_url": "http://www.rdgrahamelectric.com/contact-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885500,
+      "seconds": 2.66
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/",
+      "final_url": "http://www.rdgrahamelectric.com/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1234137,
+      "seconds": 0.76
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/leadership-team",
+      "final_url": "http://www.rdgrahamelectric.com/leadership-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885453,
+      "seconds": 3.58
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/our-people",
+      "final_url": "http://www.rdgrahamelectric.com/our-people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885354,
+      "seconds": 2.5
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/people",
+      "final_url": "http://www.rdgrahamelectric.com/people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885426,
+      "seconds": 2.47
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/executive-team",
+      "final_url": "http://www.rdgrahamelectric.com/executive-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885350,
+      "seconds": 2.77
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/meet-the-team",
+      "final_url": "http://www.rdgrahamelectric.com/meet-the-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885453,
+      "seconds": 3.02
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/careers",
+      "final_url": "http://www.rdgrahamelectric.com/careers",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 931037,
+      "seconds": 0.67
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/contact/",
+      "final_url": "http://www.rdgrahamelectric.com/contact/",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 885430,
+      "seconds": 2.28
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about/leadership",
+      "final_url": "http://www.rdgrahamelectric.com/about/leadership",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1117818,
+      "seconds": 5.14
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/sitemap.xml",
+      "final_url": "http://www.rdgrahamelectric.com/sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 467,
+      "seconds": 2.51
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://crt.sh/?q=%25.rdgrahamelectric.com&output=json",
+      "final_url": "https://crt.sh/?q=%25.rdgrahamelectric.com&output=json",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 52435,
+      "seconds": 19.02
+     }
+    ]
+   }
+  ],
+  "non_qualified_hosts_fetched": [],
+  "fetches_outside_contact_stage": [],
+  "contact_evidence": [],
+  "email_evidence": [
+   {
+    "record_type": "COMPANY",
+    "record_id": "company-30",
+    "key": "company_email",
+    "value": "mail@griffithcompany.net",
+    "url": "https://www.indeed.com/cmp/Griffith-Company",
+    "source_type": "JOB_BOARD",
+    "source_priority": 3,
+    "raw_payload": {
+     "email_type": "ROLE",
+     "email": "mail@griffithcompany.net",
+     "kind": "ROLE",
+     "source_url": "https://www.indeed.com/cmp/Griffith-Company",
+     "source_portal": "JOB_BOARD",
+     "discovery_stage": "OTHER_SOURCE",
+     "contact_name": null,
+     "contact_title": null,
+     "on_company_domain": true,
+     "verification_status": "PENDING"
+    }
+   },
+   {
+    "record_type": "COMPANY",
+    "record_id": "company-39",
+    "key": "company_email",
+    "value": "estimating@rdgrahamelectric.com",
+    "url": "http://www.rdgrahamelectric.com",
+    "source_type": "COMPANY_WEBSITE",
+    "source_priority": 3,
+    "raw_payload": {
+     "email_type": "ROLE",
+     "email": "estimating@rdgrahamelectric.com",
+     "kind": "ROLE",
+     "source_url": "http://www.rdgrahamelectric.com",
+     "source_portal": "COMPANY_WEBSITE",
+     "discovery_stage": "PUBLIC_WEB",
+     "contact_name": null,
+     "contact_title": null,
+     "on_company_domain": true,
+     "verification_status": "PENDING"
+    }
+   }
+  ],
+  "access_counters": {
+   "robots_blocked": 0,
+   "ssrf_blocked": 0,
+   "fallback_count": 0
+  }
+ },
+ "after": {
+  "elapsed_seconds": 214.5,
+  "raw_jobs": 100,
+  "postings_with_emails": 7,
+  "posting_emails": [
+   "careers@buildwithdcbg.com",
+   "cms.disabilityrescen@illinois.gov",
+   "dot.contacthr@illinois.gov",
+   "erica@ncountylandscape.com",
+   "hr@lesker.com",
+   "recruiting@bakerroofing.com"
+  ],
+  "verdicts": {
+   "QUALIFIED": [
+    "Brown and Root Industrial Services",
+    "Griffith Company",
+    "R.D. Graham Electric, LLC"
+   ],
+   "NEEDS_REVIEW": [
+    "Phoenix Loss Control",
+    "MK Consulting Group",
+    "TechniCraft Collision Repair Experts",
+    "I-Grace",
+    "CMG Services LLC",
+    "HILLER COMPANIES",
+    "KR Painting, LLC",
+    "PennEnergy Resources LLC.",
+    "Top Cut Lawn Care",
+    "Tri-City Glass",
+    "Weil Group, Inc",
+    "West Tech Energy",
+    "DC Building Group",
+    "North County Landscape Co.",
+    "Pessoa Construction Company",
+    "Project Solutions Inc."
+   ],
+   "REJECTED": 22
+  },
+  "contact_stage_called_for": [
+   [
+    "Brown and Root Industrial Services",
+    "QUALIFIED"
+   ],
+   [
+    "Griffith Company",
+    "QUALIFIED"
+   ],
+   [
+    "R.D. Graham Electric, LLC",
+    "QUALIFIED"
+   ]
+  ],
+  "contact_discovery_report": {
+   "qualified": 3,
+   "searched": 3,
+   "skipped_budget": 0,
+   "page_budget_exhausted": 1,
+   "failed": 0,
+   "pages_fetched": 82,
+   "contacts": 0,
+   "emails": 2,
+   "company_budget": 6
+  },
+  "companies": [
+   {
+    "company": "Brown and Root Industrial Services",
+    "website": "https://www.brownandroot.com",
+    "contact_discovery": "PAGE_BUDGET_EXHAUSTED",
+    "discovery_stages": [],
+    "pages_fetched": 32,
+    "pages_ok": 15,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_page": {
+      "fetched": 22,
+      "ok": 10
+     },
+     "employer_sitemap": {
+      "fetched": 3,
+      "ok": 3
+     },
+     "other:recruiting.adp.com": {
+      "fetched": 5,
+      "ok": 0
+     }
+    },
+    "errors": {
+     "No module named 'camoufox'": 3,
+     "HOST_CIRCUIT_OPEN": 2,
+     "NOT_FOUND": 12
+    },
+    "engines": {
+     "SCRAPLING": 30,
+     "NONE": 2
+    },
+    "contacts": [],
+    "observed_emails": [],
+    "email_status": "NO_PUBLIC_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225799206&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225799206",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225799206&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225799206",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 2284,
+      "seconds": 7.95
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844100&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844100",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844100&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844100",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 12923,
+      "seconds": 3.19
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844900&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844900",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225844900&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225844900",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "No module named 'camoufox'",
+      "ok": false,
+      "bytes": 12916,
+      "seconds": 4.0
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225857006&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225857006",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225857006&c=2168107&d=Confidential&rb=INDEED&idUnique=5001225857006",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.0
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225832806&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225832806",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225832806&c=2168107&d=ExternalCareerSite&rb=INDEED&idUnique=5001225832806",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.02
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.indeed.com/cmp/Brown-and-Root-Industrial-Services",
+      "final_url": "https://www.indeed.com/cmp/Brown-and-Root-Industrial-Services",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 465504,
+      "seconds": 1.05
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com",
+      "final_url": "https://www.brownandroot.com",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 394335,
+      "seconds": 5.5
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/what-we-do/procure-build/project-construction-management/",
+      "final_url": "https://www.brownandroot.com/what-we-do/procure-build/project-construction-management/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 136753,
+      "seconds": 2.69
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/",
+      "final_url": "https://www.brownandroot.com/who-we-are/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 137378,
+      "seconds": 2.62
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/history/",
+      "final_url": "https://www.brownandroot.com/who-we-are/history/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 148510,
+      "seconds": 2.69
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/mission-values/",
+      "final_url": "https://www.brownandroot.com/who-we-are/mission-values/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 144819,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/leadership/",
+      "final_url": "https://www.brownandroot.com/leadership/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 134074,
+      "seconds": 2.55
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/who-we-are/vision-for-the-future/",
+      "final_url": "https://www.brownandroot.com/who-we-are/vision-for-the-future/",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 135425,
+      "seconds": 2.61
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/team",
+      "final_url": "https://www.brownandroot.com/team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.76
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/our-team",
+      "final_url": "https://www.brownandroot.com/our-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.88
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/management",
+      "final_url": "https://www.brownandroot.com/management",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/about-us",
+      "final_url": "https://www.brownandroot.com/about-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/about",
+      "final_url": "https://www.brownandroot.com/about",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 137378,
+      "seconds": 3.5
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/company",
+      "final_url": "https://www.brownandroot.com/company",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.58
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/staff",
+      "final_url": "https://www.brownandroot.com/staff",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.77
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/contact",
+      "final_url": "https://www.brownandroot.com/contact",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 169142,
+      "seconds": 4.5
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/contact-us",
+      "final_url": "https://www.brownandroot.com/contact-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.58
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/leadership-team",
+      "final_url": "https://www.brownandroot.com/leadership-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.75
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/our-people",
+      "final_url": "https://www.brownandroot.com/our-people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.67
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/people",
+      "final_url": "https://www.brownandroot.com/people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/executive-team",
+      "final_url": "https://www.brownandroot.com/executive-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.66
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/meet-the-team",
+      "final_url": "https://www.brownandroot.com/meet-the-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 5.12
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/careers",
+      "final_url": "https://www.brownandroot.com/careers",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 142906,
+      "seconds": 4.22
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/about/leadership",
+      "final_url": "https://www.brownandroot.com/about/leadership",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 134074,
+      "seconds": 3.58
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/sitemap.xml",
+      "final_url": "https://www.brownandroot.com/sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 587,
+      "seconds": 2.7
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/post-sitemap.xml",
+      "final_url": "https://www.brownandroot.com/post-sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 20914,
+      "seconds": 1.98
+     },
+     {
+      "company": "Brown and Root Industrial Services",
+      "url": "https://www.brownandroot.com/page-sitemap.xml",
+      "final_url": "https://www.brownandroot.com/page-sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 17304,
+      "seconds": 4.28
+     }
+    ]
+   },
+   {
+    "company": "Griffith Company",
+    "website": "http://www.griffithcompany.net",
+    "contact_discovery": "COMPLETED",
+    "discovery_stages": [],
+    "pages_fetched": 23,
+    "pages_ok": 3,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 1,
+      "ok": 0
+     },
+     "employer_page": {
+      "fetched": 18,
+      "ok": 0
+     },
+     "employer_sitemap": {
+      "fetched": 1,
+      "ok": 0
+     },
+     "other:crt.sh": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "other:griffithcareers.applytojob.com": {
+      "fetched": 1,
+      "ok": 1
+     }
+    },
+    "errors": {
+     "HTTP_409": 20
+    },
+    "engines": {
+     "SCRAPLING": 23
+    },
+    "contacts": [],
+    "observed_emails": [
+     {
+      "email": "mail@griffithcompany.net",
+      "kind": "ROLE",
+      "source_url": "https://www.indeed.com/cmp/Griffith-Company",
+      "source_portal": "JOB_BOARD",
+      "discovery_stage": "OTHER_SOURCE",
+      "contact_name": null,
+      "contact_title": null,
+      "on_company_domain": true,
+      "verification_status": "PENDING"
+     }
+    ],
+    "email_status": "ROLE_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "Griffith Company",
+      "url": "https://griffithcareers.applytojob.com/apply/hQB0AnOgQp/Estimator-Landscape-Division?source=INDE&~",
+      "final_url": "https://griffithcareers.applytojob.com/apply/hQB0AnOgQp/Estimator-Landscape-Division?source=INDE&~",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 152642,
+      "seconds": 0.75
+     },
+     {
+      "company": "Griffith Company",
+      "url": "https://www.indeed.com/cmp/Griffith-Company",
+      "final_url": "https://www.indeed.com/cmp/Griffith-Company",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 360465,
+      "seconds": 0.73
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net",
+      "final_url": "http://www.griffithcompany.net",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 0.14
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/leadership",
+      "final_url": "http://www.griffithcompany.net/leadership",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.99
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/team",
+      "final_url": "http://www.griffithcompany.net/team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.0
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/our-team",
+      "final_url": "http://www.griffithcompany.net/our-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.08
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/management",
+      "final_url": "http://www.griffithcompany.net/management",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.97
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about-us",
+      "final_url": "http://www.griffithcompany.net/about-us",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.0
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about",
+      "final_url": "http://www.griffithcompany.net/about",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.01
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/company",
+      "final_url": "http://www.griffithcompany.net/company",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.97
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/who-we-are",
+      "final_url": "http://www.griffithcompany.net/who-we-are",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/staff",
+      "final_url": "http://www.griffithcompany.net/staff",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.03
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/contact",
+      "final_url": "http://www.griffithcompany.net/contact",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.95
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/contact-us",
+      "final_url": "http://www.griffithcompany.net/contact-us",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/leadership-team",
+      "final_url": "http://www.griffithcompany.net/leadership-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.05
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/our-people",
+      "final_url": "http://www.griffithcompany.net/our-people",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.97
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/people",
+      "final_url": "http://www.griffithcompany.net/people",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/executive-team",
+      "final_url": "http://www.griffithcompany.net/executive-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.01
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/meet-the-team",
+      "final_url": "http://www.griffithcompany.net/meet-the-team",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/careers",
+      "final_url": "http://www.griffithcompany.net/careers",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.0
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/about/leadership",
+      "final_url": "http://www.griffithcompany.net/about/leadership",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 2.02
+     },
+     {
+      "company": "Griffith Company",
+      "url": "http://www.griffithcompany.net/sitemap.xml",
+      "final_url": "http://www.griffithcompany.net/sitemap.xml",
+      "status": 409,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": false,
+      "bytes": 6000,
+      "seconds": 1.98
+     },
+     {
+      "company": "Griffith Company",
+      "url": "https://crt.sh/?q=%25.griffithcompany.net&output=json",
+      "final_url": "https://crt.sh/?q=%25.griffithcompany.net&output=json",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 96226,
+      "seconds": 13.55
+     }
+    ]
+   },
+   {
+    "company": "R.D. Graham Electric, LLC",
+    "website": "http://www.rdgrahamelectric.com",
+    "contact_discovery": "COMPLETED",
+    "discovery_stages": [],
+    "pages_fetched": 27,
+    "pages_ok": 11,
+    "by_kind": {
+     "board_profile_page": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_homepage": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "employer_page": {
+      "fetched": 20,
+      "ok": 5
+     },
+     "employer_sitemap": {
+      "fetched": 3,
+      "ok": 3
+     },
+     "other:crt.sh": {
+      "fetched": 1,
+      "ok": 1
+     },
+     "other:recruiting.adp.com": {
+      "fetched": 1,
+      "ok": 0
+     }
+    },
+    "errors": {
+     "HOST_CIRCUIT_OPEN": 1,
+     "NOT_FOUND": 15
+    },
+    "engines": {
+     "NONE": 1,
+     "SCRAPLING": 26
+    },
+    "contacts": [],
+    "observed_emails": [
+     {
+      "email": "estimating@rdgrahamelectric.com",
+      "kind": "ROLE",
+      "source_url": "http://www.rdgrahamelectric.com",
+      "source_portal": "COMPANY_WEBSITE",
+      "discovery_stage": "PUBLIC_WEB",
+      "contact_name": null,
+      "contact_title": null,
+      "on_company_domain": true,
+      "verification_status": "PENDING"
+     }
+    ],
+    "email_status": "ROLE_EMAIL_FOUND",
+    "pages": [
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225833500&c=2191831&d=ExternalCareerSite&rb=INDEED&idUnique=5001225833500",
+      "final_url": "https://recruiting.adp.com/srccsh/public/RTI.home?r=5001225833500&c=2191831&d=ExternalCareerSite&rb=INDEED&idUnique=5001225833500",
+      "status": null,
+      "engine": "NONE",
+      "fallback": false,
+      "blocked": true,
+      "error": "HOST_CIRCUIT_OPEN",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 0.05
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.indeed.com/cmp/R.d.-Graham-Electric,-LLC",
+      "final_url": "https://www.indeed.com/cmp/R.d.-Graham-Electric,-LLC",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 347210,
+      "seconds": 0.78
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com",
+      "final_url": "http://www.rdgrahamelectric.com",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1234137,
+      "seconds": 1.8
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/leadership",
+      "final_url": "http://www.rdgrahamelectric.com/leadership",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.69
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/team",
+      "final_url": "http://www.rdgrahamelectric.com/team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.19
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/our-team",
+      "final_url": "http://www.rdgrahamelectric.com/our-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.84
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/management",
+      "final_url": "http://www.rdgrahamelectric.com/management",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.61
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about-us",
+      "final_url": "http://www.rdgrahamelectric.com/about-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.56
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about",
+      "final_url": "http://www.rdgrahamelectric.com/about",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1115521,
+      "seconds": 2.0
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/company",
+      "final_url": "http://www.rdgrahamelectric.com/company",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.49
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/who-we-are",
+      "final_url": "http://www.rdgrahamelectric.com/who-we-are",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.38
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/staff",
+      "final_url": "http://www.rdgrahamelectric.com/staff",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.84
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/contact",
+      "final_url": "http://www.rdgrahamelectric.com/contact",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.0
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/contact-us",
+      "final_url": "http://www.rdgrahamelectric.com/contact-us",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.99
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/leadership-team",
+      "final_url": "http://www.rdgrahamelectric.com/leadership-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.16
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/our-people",
+      "final_url": "http://www.rdgrahamelectric.com/our-people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.95
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/people",
+      "final_url": "http://www.rdgrahamelectric.com/people",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.05
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/executive-team",
+      "final_url": "http://www.rdgrahamelectric.com/executive-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 2.05
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/meet-the-team",
+      "final_url": "http://www.rdgrahamelectric.com/meet-the-team",
+      "status": 404,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": true,
+      "error": "NOT_FOUND",
+      "ok": false,
+      "bytes": 0,
+      "seconds": 1.84
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/careers",
+      "final_url": "http://www.rdgrahamelectric.com/careers",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 931037,
+      "seconds": 1.69
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/about/leadership",
+      "final_url": "http://www.rdgrahamelectric.com/about/leadership",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1117818,
+      "seconds": 2.14
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "http://www.rdgrahamelectric.com/sitemap.xml",
+      "final_url": "http://www.rdgrahamelectric.com/sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 467,
+      "seconds": 1.73
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.rdgrahamelectric.com/blog-posts-sitemap.xml",
+      "final_url": "https://www.rdgrahamelectric.com/blog-posts-sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 9407,
+      "seconds": 1.94
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.rdgrahamelectric.com/blog-categories-sitemap.xml",
+      "final_url": "https://www.rdgrahamelectric.com/blog-categories-sitemap.xml",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 555,
+      "seconds": 1.94
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.rdgrahamelectric.com/post/team-shoutout-greensboro-city-card-awards",
+      "final_url": "https://www.rdgrahamelectric.com/post/team-shoutout-greensboro-city-card-awards",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1211167,
+      "seconds": 2.17
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://www.rdgrahamelectric.com/post/team-shoutout-osha-10-certifications",
+      "final_url": "https://www.rdgrahamelectric.com/post/team-shoutout-osha-10-certifications",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 1207670,
+      "seconds": 4.01
+     },
+     {
+      "company": "R.D. Graham Electric, LLC",
+      "url": "https://crt.sh/?q=%25.rdgrahamelectric.com&output=json",
+      "final_url": "https://crt.sh/?q=%25.rdgrahamelectric.com&output=json",
+      "status": 200,
+      "engine": "SCRAPLING",
+      "fallback": false,
+      "blocked": false,
+      "error": null,
+      "ok": true,
+      "bytes": 52435,
+      "seconds": 11.3
+     }
+    ]
+   }
+  ],
+  "non_qualified_hosts_fetched": [],
+  "fetches_outside_contact_stage": [],
+  "contact_evidence": [],
+  "email_evidence": [
+   {
+    "record_type": "COMPANY",
+    "record_id": "company-30",
+    "key": "company_email",
+    "value": "mail@griffithcompany.net",
+    "url": "https://www.indeed.com/cmp/Griffith-Company",
+    "source_type": "JOB_BOARD",
+    "source_priority": 3,
+    "raw_payload": {
+     "email_type": "ROLE",
+     "email": "mail@griffithcompany.net",
+     "kind": "ROLE",
+     "source_url": "https://www.indeed.com/cmp/Griffith-Company",
+     "source_portal": "JOB_BOARD",
+     "discovery_stage": "OTHER_SOURCE",
+     "contact_name": null,
+     "contact_title": null,
+     "on_company_domain": true,
+     "verification_status": "PENDING"
+    }
+   },
+   {
+    "record_type": "COMPANY",
+    "record_id": "company-39",
+    "key": "company_email",
+    "value": "estimating@rdgrahamelectric.com",
+    "url": "http://www.rdgrahamelectric.com",
+    "source_type": "COMPANY_WEBSITE",
+    "source_priority": 3,
+    "raw_payload": {
+     "email_type": "ROLE",
+     "email": "estimating@rdgrahamelectric.com",
+     "kind": "ROLE",
+     "source_url": "http://www.rdgrahamelectric.com",
+     "source_portal": "COMPANY_WEBSITE",
+     "discovery_stage": "PUBLIC_WEB",
+     "contact_name": null,
+     "contact_title": null,
+     "on_company_domain": true,
+     "verification_status": "PENDING"
+    }
+   }
+  ],
+  "access_counters": {
+   "robots_blocked": 0,
+   "ssrf_blocked": 0,
+   "fallback_count": 0
+  }
+ }
+}

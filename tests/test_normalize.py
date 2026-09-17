@@ -202,3 +202,10 @@ def test_nameless_posting_is_not_actionable(make_job):
 def test_aggregator_hosts_never_become_employer_domains(aggregator_url):
     """An aggregator serves job URLs on its own host; that is not the employer."""
     assert normalize_domain(aggregator_url) == ""
+
+
+def test_ats_vendors_seen_live_are_not_employer_domains():
+    from nexbase.pipeline.normalize import normalize_domain
+
+    for url in ("https://catsone.com", "https://careerplug.com", "https://entertimeonline.com"):
+        assert normalize_domain(url) == "", url

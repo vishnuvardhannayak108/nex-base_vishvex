@@ -56,7 +56,13 @@ class FetchedPage:
 
     @property
     def ok(self) -> bool:
-        return bool(self.html) and not self.blocked
+        """Usable content: a body, not blocked, and not an HTTP error page.
+
+        A 409 Cloudflare "DNS resolution error" page or a 500 page has a body
+        but says nothing about the site; reading it as content is wrong.
+        """
+        ok_status = self.status is None or self.status < 400
+        return bool(self.html) and not self.blocked and ok_status
 
 
 class AccessLayer:
@@ -215,15 +221,10 @@ class AccessLayer:
 
         # 1. Scrapling first.
         page, error = self._try_scrapling(url, alternate=False)
-        if page is not None and not looks_blocked(page.status, page.html_content):
-            self._breaker.record_success(url)
-            return self._build_page(url, page, "SCRAPLING", used_fallback=False)
 
-        if page is None:
-            # A transport failure (timeout, DNS, refused connection).
-            self._breaker.record_failure(url)
-
-        # A 404/410 is an answer, not a block. Escalating cannot help.
+        # A 404/410 is an answer, not a block. Escalating cannot help. Checked
+        # before success: a site's own 404 page has a full body, so it passed
+        # the block check and came back as a readable page.
         if page is not None and page.status in NOT_FOUND_STATUS_CODES:
             # The host answered, so it is healthy - only the path is missing.
             self._breaker.record_success(url)
@@ -233,6 +234,14 @@ class AccessLayer:
                 engine="SCRAPLING", used_fallback=False,
                 blocked=True, error="NOT_FOUND",
             )
+
+        if page is not None and not looks_blocked(page.status, page.html_content):
+            self._breaker.record_success(url)
+            return self._build_page(url, page, "SCRAPLING", used_fallback=False)
+
+        if page is None:
+            # A transport failure (timeout, DNS, refused connection).
+            self._breaker.record_failure(url)
 
         # 2. Retry / alternate method, still Scrapling.
         self.log.warning(

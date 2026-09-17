@@ -65,6 +65,8 @@ NON_EMPLOYER_HOSTS: frozenset[str] = frozenset(
         "paylocity.com", "paycomonline.net", "adp.com", "dayforcehcm.com",
         "ukg.com", "ultipro.com", "jobvite.com", "rippling.com", "gem.com",
         "pinpointhq.com", "hrmos.co", "keka.com", "darwinbox.com",
+        # Published as Indeed "company websites" in the 2026-09-17 live smoke.
+        "catsone.com", "careerplug.com", "entertimeonline.com",
         # Social / misc
         "facebook.com", "twitter.com", "x.com", "instagram.com", "youtube.com",
         "bit.ly", "tinyurl.com", "goo.gl", "t.co", "lnkd.in",

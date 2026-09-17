@@ -673,7 +673,7 @@ def test_rate_limit_is_per_caller(monkeypatch):
 
 
 def test_sitemap_contact_pages_stay_on_the_employer_domain(settings):
-    from nexbase.contacts.discovery import ContactDiscovery
+    from nexbase.contacts.discovery import ContactDiscovery, ContactDiscoveryReport
 
     sitemap = (
         "<urlset>"
@@ -683,10 +683,12 @@ def test_sitemap_contact_pages_stay_on_the_employer_domain(settings):
         "</urlset>"
     )
     access = StubAccess({"acme.com/sitemap.xml": sitemap}, settings=settings)
+    report = ContactDiscoveryReport(candidates=[])
     picked = ContactDiscovery(access=access, settings=settings)._sitemap_contact_pages(
-        "https://acme.com"
+        "https://acme.com", report
     )
     assert picked == ["https://acme.com/company/leadership-team"]
+    assert report.pages_fetched == len(access.requested), "sitemap fetches use the page budget"
 
 
 def test_ats_rows_carry_search_intent_not_company_industry():

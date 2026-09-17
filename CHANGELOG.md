@@ -8,6 +8,22 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 6 live smoke fixes (2026-09-17)
+
+Tests: 809 before, **815 passed** after (0 failed). Evidence:
+`reports/phase6_contact_smoke.json` (3 real QUALIFIED companies, before/after).
+
+Each fix is a defect the live run exposed; no ranking, gating or qualification
+rule changed.
+
+| Fixed | Where (callers) | Live evidence | Test |
+|---|---|---|---|
+| A site's own 404 page with a body was returned as a readable page (the 404 branch ran after the success check); any other error status with a body (409, 500) was `ok` | `AccessLayer._raw_fetch`, `FetchedPage.ok` (contacts, board scrapers, LinkedIn signal, domain resolver, site evidence) | 27 real 404 pages and 20 Cloudflare 409 "DNS resolution error" pages read as content | `test_a_404_with_a_full_error_page_is_not_content`, `test_an_error_status_page_with_a_body_is_not_ok` |
+| Small sitemaps judged blocked by the HTML visible-text heuristic (Scrapling wraps XML as `<html><body><sitemapindex>`), so the sitemap stage never worked | `blocking.looks_blocked` | rdgrahamelectric.com and brownandroot.com sitemaps (200) blocked; 6 of 7 read after the fix | `test_a_small_sitemap_or_json_document_is_not_blocked` |
+| The same page fetched twice per company (homepage read for links and again as `/`; `/leadership/` and `/leadership`) | `ContactDiscovery._harvest`, `_links_from_homepage` | 7 duplicate fetches in 76; Brown and Root hit its budget | `test_the_same_page_is_fetched_once_per_company` |
+| Sitemap and certificate-transparency lookups were not charged to the page budget | `ContactDiscovery._sitemap_contact_pages`, `_subdomain_contact_pages` | Brown and Root fetched 32 pages on a budget of 30 | `test_sitemap_lookups_cannot_overrun_the_page_budget`, sitemap test in `test_hardening.py` |
+| ATS / HR vendors accepted as employer domains | `normalize.NON_EMPLOYER_HOSTS` | Indeed "company websites" `catsone.com`, `careerplug.com`, `entertimeonline.com` | `test_ats_vendors_seen_live_are_not_employer_domains` |
+
 ## Phase 6 — Free / public contact discovery (2026-09-17)
 
 Tests: 773 before, **809 passed** after (0 failed).

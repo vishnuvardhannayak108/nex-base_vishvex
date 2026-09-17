@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
-from nexbase.access.fetcher import AccessLayer
+from nexbase.access.fetcher import AccessLayer, FetchedPage
 from nexbase.config import Settings, get_settings
 from nexbase.contacts.extraction import (
     extract_contacts_from_html,
@@ -91,6 +91,17 @@ class ContactDiscoveryReport:
     page_emails: list[dict] = field(default_factory=list)
     #: True when the page budget stopped discovery before it was satisfied.
     budget_exhausted: bool = False
+    #: Normalized URLs already fetched, so "/leadership" and "/leadership/",
+    #: or the homepage read for its links and again as "/", cost one fetch.
+    visited: set[str] = field(default_factory=set)
+
+    def first_visit(self, url: str) -> bool:
+        parts = urlsplit(url)
+        key = (parts.netloc.lower(), parts.path.rstrip("/"), parts.query)
+        if key in self.visited:
+            return False
+        self.visited.add(key)
+        return True
 
     def add_emails(self, emails: list[str], url: str, stage: str) -> None:
         seen = {e["email"] for e in self.page_emails}
@@ -101,6 +112,31 @@ class ContactDiscoveryReport:
                 self.page_emails.append({"email": email, "source_url": url,
                                          "source_portal": source_type,
                                          "discovery_stage": stage})
+
+
+class _CountedAccess:
+    """Access Layer view that charges every fetch to the company's page budget.
+
+    The sitemap and subdomain helpers fetch through their own scanner; without
+    this their fetches were not counted and a company could exceed its budget.
+    """
+
+    def __init__(self, access: AccessLayer, report: ContactDiscoveryReport, limit: int) -> None:
+        self._access = access
+        self._report = report
+        self._limit = limit
+
+    def fetch(self, url: str):
+        if self._report.pages_fetched >= self._limit:
+            self._report.budget_exhausted = True
+            return FetchedPage(url=url, status=None, html="", title="", engine="NONE",
+                               used_fallback=False, blocked=True,
+                               error="PAGE_BUDGET_EXHAUSTED")
+        self._report.pages_fetched += 1
+        return self._access.fetch(url)
+
+    def __getattr__(self, name):
+        return getattr(self._access, name)
 
 
 class ContactDiscovery:
@@ -202,7 +238,7 @@ class ContactDiscovery:
         report: ContactDiscoveryReport,
         company_name: str,
     ) -> list[ContactCandidate]:
-        if not self._budget_left(report):
+        if not self._budget_left(report) or not report.first_visit(url):
             return []
         try:
             page = self.access.fetch(url)
@@ -335,7 +371,7 @@ class ContactDiscovery:
         # sitemap rather than crawling - only URLs whose path already looks like
         # a team/contact page are fetched, and only from this same host.
         if not self._enough(contacts) and self._budget_left(report):
-            for url in self._sitemap_contact_pages(base):
+            for url in self._sitemap_contact_pages(base, report):
                 if self._enough(contacts):
                     break
                 contacts.extend(
@@ -347,7 +383,7 @@ class ContactDiscovery:
         # Transparency and are ranked before any is fetched, so this stays a
         # short list of likely hosts, not a sweep.
         if not self._enough(contacts) and self._budget_left(report):
-            for url in self._subdomain_contact_pages(base):
+            for url in self._subdomain_contact_pages(base, report):
                 if self._enough(contacts):
                     break
                 contacts.extend(
@@ -371,7 +407,7 @@ class ContactDiscovery:
             )
         return contacts
 
-    def _subdomain_contact_pages(self, base: str) -> list[str]:
+    def _subdomain_contact_pages(self, base: str, report: ContactDiscoveryReport) -> list[str]:
         """Contact pages on the employer's own subdomains, bounded and ranked."""
         if not self.settings.contacts_scan_subdomains:
             return []
@@ -384,7 +420,10 @@ class ContactDiscovery:
             from nexbase.pipeline.site_evidence import SiteEvidenceScanner
 
             scanner = SiteEvidenceScanner(
-                access=self.access, settings=self.settings, logger=self.log
+                access=_CountedAccess(self.access, report,
+                                      self.settings.contacts_max_pages_per_company),
+                settings=self.settings,
+                logger=self.log,
             )
             hosts = scanner.prioritise_subdomains(
                 scanner.discover_subdomains(domain), domain
@@ -476,7 +515,7 @@ class ContactDiscovery:
 
         from nexbase.pipeline.normalize import extract_host
 
-        if not self._budget_left(report):
+        if not self._budget_left(report) or not report.first_visit(base):
             return []
         try:
             page = self.access.fetch(base)
@@ -507,7 +546,7 @@ class ContactDiscovery:
                           found=len(seen))
         return list(seen)
 
-    def _sitemap_contact_pages(self, base: str) -> list[str]:
+    def _sitemap_contact_pages(self, base: str, report: ContactDiscoveryReport) -> list[str]:
         """Contact/team URLs named by the site's own sitemap, bounded."""
         from nexbase.pipeline.normalize import extract_host
 
@@ -515,7 +554,10 @@ class ContactDiscovery:
             from nexbase.pipeline.site_evidence import SiteEvidenceScanner
 
             scanner = SiteEvidenceScanner(
-                access=self.access, settings=self.settings, logger=self.log
+                access=_CountedAccess(self.access, report,
+                                      self.settings.contacts_max_pages_per_company),
+                settings=self.settings,
+                logger=self.log,
             )
             candidates = scanner._sitemap_urls(
                 base.rstrip("/"), self.settings.contacts_sitemap_max_urls

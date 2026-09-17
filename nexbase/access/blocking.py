@@ -67,6 +67,9 @@ _WEAK_MARKERS = (
     "captcha",
 )
 
+#: Root elements of non-HTML documents fetched as pages (sitemaps).
+_DOCUMENT_ROOTS = ("<?xml", "<urlset", "<sitemapindex")
+
 #: Only the first N characters are inspected for markers.
 HEAD_WINDOW = 4000
 
@@ -123,6 +126,14 @@ def looks_blocked(
 
     if rendered:
         # A real browser already executed the page; shortness is not evidence.
+        return False
+
+    # A sitemap index or a JSON response is short by nature; the visible-text
+    # heuristics below are for HTML and marked every small sitemap blocked.
+    # Scrapling serves XML wrapped as "<html><body><sitemapindex ...", so the
+    # root element is looked for near the start rather than at it.
+    start = text.lstrip()[:200].lower()
+    if start[:1] in ("{", "[") or any(root in start for root in _DOCUMENT_ROOTS):
         return False
 
     body_len = visible_text_length(text)

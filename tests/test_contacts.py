@@ -356,3 +356,37 @@ def test_page_emails_carry_the_page_they_were_seen_on(settings):
     assert report.page_emails == [{
         "email": "hr@acme.com", "source_url": "https://www.indeed.com/viewjob?jk=9",
         "source_portal": "JOB_BOARD", "discovery_stage": "SAME_SOURCE"}]
+
+
+def test_the_same_page_is_fetched_once_per_company(settings):
+    """Live smoke: the homepage and trailing-slash variants were fetched twice."""
+    from nexbase.contacts.discovery import ContactDiscovery
+    from tests.test_pipeline_e2e import StubAccess
+
+    settings.contacts_scan_subdomains = False
+    home = ("<html><body>" + "Acme builds things. " * 40 +
+            "<a href='/leadership/'>Leadership</a><a href='/contact'>Contact</a></body></html>")
+    access = StubAccess({"acme.com": home}, settings=settings)
+    discovery = ContactDiscovery(access=access, settings=settings)
+    discovery._host_is_live = lambda base: True
+    discovery.discover("Acme", "https://acme.com", [], [])
+
+    keys = [url.rstrip("/") for url in access.requested]
+    assert len(keys) == len(set(keys)), sorted(keys)
+
+
+def test_sitemap_lookups_cannot_overrun_the_page_budget(settings):
+    """Live smoke: a sitemap index and its children took a company to 32 of 30 pages."""
+    from nexbase.contacts.discovery import ContactDiscovery, ContactDiscoveryReport
+    from tests.test_pipeline_e2e import StubAccess
+
+    settings.contacts_max_pages_per_company = 2
+    index = ('<sitemapindex><sitemap><loc>https://acme.com/a-sitemap.xml</loc></sitemap>'
+             '<sitemap><loc>https://acme.com/b-sitemap.xml</loc></sitemap></sitemapindex>')
+    access = StubAccess({"acme.com/sitemap.xml": index}, settings=settings)
+    report = ContactDiscoveryReport(candidates=[], pages_fetched=1)
+    ContactDiscovery(access=access, settings=settings)._sitemap_contact_pages(
+        "https://acme.com", report)
+
+    assert report.pages_fetched == 2 and len(access.requested) == 1
+    assert report.budget_exhausted is True

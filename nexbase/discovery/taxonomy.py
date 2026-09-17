@@ -11,6 +11,7 @@ The packaged CSV is produced by ``scripts/build_taxonomy.py``.
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -122,6 +123,80 @@ def _title_key(title: str) -> str:
     """
     words = title.strip().lower().split()
     return " ".join(_singular(w) for w in words)
+
+
+# ---------------------------------------------------------------------------
+# A source's industry label -> NexBase sector (official NAICS titles)
+# ---------------------------------------------------------------------------
+_NAICS_TITLES_FILE = "naics_titles.csv"
+
+#: Connective words that name no industry.
+_LABEL_STOPWORDS = frozenset({"and", "or", "the", "of", "for", "in", "on", "other",
+                              "all", "except", "related"})
+
+
+def _label_words(text: str) -> frozenset[str]:
+    text = re.sub(r"\([^)]*\)", " ", text.lower())   # "(except Casino Hotels)"
+    return frozenset(_singular(w) for w in re.findall(r"[a-z]+", text)
+                     if w not in _LABEL_STOPWORDS)
+
+
+@lru_cache(maxsize=1)
+def _industry_vocabulary() -> tuple[tuple[frozenset[str], str | None, str | None], ...]:
+    """``(title words, NexBase sector or None, NAICS code)`` for NAICS titles and sector names."""
+    entries = [(_label_words(sector.value), sector.value, None) for sector in ClientIndustry]
+    path = resources.files(_DATA_PACKAGE).joinpath(_NAICS_TITLES_FILE)
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        entries.extend((_label_words(row["naics_title"]), row["client_industry"] or None,
+                        row["naics_code"]) for row in csv.DictReader(fh))
+    return tuple(entry for entry in entries if entry[0])
+
+
+def _naics_contains(parent: str | None, child: str | None) -> bool:
+    """True when NAICS ``child`` sits under ``parent`` ("48-49" contains "493")."""
+    if not parent or not child or parent == child or not child.isdigit():
+        return False
+    first, _, last = parent.partition("-")
+    if last:
+        return first <= child[:2] <= last
+    return child.startswith(parent)
+
+
+def sector_for_industry_label(label: str | None) -> str | None:
+    """The NexBase sector a source's industry label names, or None.
+
+    A label that is a NexBase sector name is that sector. Otherwise it is
+    compared with every official 2022 NAICS title (2 to 6 digits) and the sector
+    names: the best matches share the most words with the label, then have the
+    fewest words the label lacks, and a NAICS code tied with its own sub-code
+    gives way to it. A sector is returned only when every best match maps to
+    that one sector (``naics_titles.csv``, built from ``naics_to_industry.csv``)
+    and the match covers at least half the label. A best match in a non-NexBase
+    industry, or two sectors tied, returns None: "Automotive Dealers" is Retail
+    (NAICS 441), never Manufacturing.
+    """
+    words = _label_words(label or "")
+    if not words:
+        return None
+    for sector in ClientIndustry:
+        if words == _label_words(sector.value):
+            return sector.value
+
+    best, tied = None, []
+    for title, sector, code in _industry_vocabulary():
+        shared = len(words & title)
+        if not shared:
+            continue
+        rank = (shared, -len(words | title))
+        if best is None or rank > best:
+            best, tied = rank, [(sector, code)]
+        elif rank == best:
+            tied.append((sector, code))
+    if best is None or best[0] * 2 < len(words):
+        return None
+    sectors = {sector for sector, code in tied
+               if not any(_naics_contains(code, other) for _, other in tied)}
+    return sectors.pop() if len(sectors) == 1 else None
 
 
 def industry_for_title(title: str | None) -> str | None:

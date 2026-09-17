@@ -1,11 +1,9 @@
 """Company profile assembly from freely observed evidence.
 
-The qualification gate needs an employee range and an industry. Previously
-neither was ever supplied, so the configured size rule and the industry mix were
-dead code. This module builds a :class:`CompanyProfile` from facts already
-captured during discovery - Indeed's ``company_num_employees`` and
-``company_industry`` columns, the SOC/O*NET-derived industry of the roles being
-advertised, and the job descriptions themselves.
+The qualification gate needs an employee range and an industry. This module
+builds a :class:`CompanyProfile` from facts already captured during discovery:
+the employee count and industry label a source published about the employer,
+and the SOC/O*NET-derived industry of the roles being advertised (a hint only).
 
 Everything is evidence-backed. When a fact cannot be observed, the
 corresponding ``*_known`` flag stays ``False`` and the gate treats it as
@@ -98,39 +96,11 @@ def parse_employee_range(text: str | None) -> tuple[int | None, int | None]:
 # Industry classification
 # ---------------------------------------------------------------------------
 
-#: Free-text industry label -> the client's ten canonical industries.
-_INDUSTRY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Food & Beverage Manufacturing", ("food", "beverage", "brewery", "dairy", "bakery", "meat process", "food product")),
-    ("Plastics/Rubber", ("plastic", "rubber", "polymer", "injection mold", "resin", "composites")),
-    ("Industrial Equipment/Machinery", ("machinery", "industrial equipment", "machine shop", "cnc", "capital equipment", "heavy equipment", "tooling")),
-    ("Warehousing & Distribution", ("warehous", "distribution center", "fulfillment", "3pl", "third-party logistics", "storage")),
-    ("Logistics & Transportation", ("logistic", "transport", "trucking", "freight", "shipping", "carrier", "courier", "delivery", "supply chain", "fleet")),
-    ("Construction", ("construction", "contractor", "building", "civil engineering", "roofing", "hvac", "plumbing", "electrical contract", "concrete", "excavat", "general contract")),
-    ("Hospitality/Hotels", ("hospitality", "hotel", "resort", "restaurant", "food service", "catering", "lodging", "casino", "hotels & motels")),
-    ("Property Management/Real Estate", ("real estate", "property management", "realty", "leasing", "facilities management", "commercial property")),
-    ("Retail", ("retail", "e-commerce", "ecommerce", "store", "merchandis", "consumer goods", "grocery", "apparel")),
-    ("Manufacturing", ("manufactur", "industrial", "fabricat", "metal", "steel", "aerospace", "automotive", "electronics", "chemical", "pharma", "medical device", "packaging", "textile", "furniture", "foundry", "mill", "assembly", "production plant")),
-)
-
-
 #: How a company's industry was established. Only OBSERVED is evidence about
 #: the employer; everything else is a hint that must not qualify a company.
 OBSERVED = "OBSERVED"
 INFERRED_HINT = "INFERRED_HINT"
 UNKNOWN = "UNKNOWN"
-
-
-def classify_industry(text: str | None) -> str | None:
-    """Map a free-text industry label onto one of the ten client industries."""
-    if not text:
-        return None
-    needle = str(text).strip().lower()
-    if not needle:
-        return None
-    for industry, keywords in _INDUSTRY_PATTERNS:
-        if any(k in needle for k in keywords):
-            return industry
-    return None
 
 
 def infer_industry_from_titles(titles: list[str | None]) -> str | None:
@@ -182,15 +152,11 @@ _TA_SENIOR_RE = phrase_pattern(_TA_SENIOR_PATTERNS)
 
 @dataclass
 class InternalTASignal:
-    """Evidence about the size/maturity of a company's in-house TA function."""
+    """Evidence about a company's in-house TA function. Judged in qualification."""
 
     ta_role_count: int = 0
     has_senior_ta_leader: bool = False
     matched_titles: list[str] = field(default_factory=list)
-
-    @property
-    def is_mature(self) -> bool:
-        return self.ta_role_count >= 4 or (self.has_senior_ta_leader and self.ta_role_count >= 2)
 
 
 def detect_internal_ta(job_titles: list[str | None]) -> InternalTASignal:
@@ -254,9 +220,14 @@ class CompanyProfile:
 
 
 def _set_observed_industry(profile, raw_industry, source) -> None:
-    """Record an industry the source published about the employer."""
+    """Record an industry the source published about the employer.
+
+    The label is placed in a NexBase sector through the official NAICS titles
+    (``taxonomy.sector_for_industry_label``); an unplaceable label keeps
+    ``client_industry`` None and is reviewed.
+    """
     profile.industry = raw_industry
-    profile.client_industry = classify_industry(raw_industry)
+    profile.client_industry = taxonomy.sector_for_industry_label(raw_industry)
     profile.industry_known = True
     profile.industry_source = source
     profile.industry_state = OBSERVED
@@ -266,16 +237,6 @@ def _apply_industry(profile, company, fresh, titles) -> None:
     observed = company.observed_industry
     if observed:
         _set_observed_industry(profile, observed, "JOB_BOARD")
-        return
-
-    # The employer's own words in its posting are still the employer speaking.
-    blob = " ".join((job.description or "")[:2000] for job, _ in fresh.fresh_jobs[:5])
-    if classify_industry(blob):
-        profile.industry = None
-        profile.client_industry = classify_industry(blob)
-        profile.industry_known = True
-        profile.industry_source = "JOB_DESCRIPTION"
-        profile.industry_state = OBSERVED
         return
 
     # From here down nothing was published about the employer. Hints are

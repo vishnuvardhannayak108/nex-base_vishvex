@@ -57,13 +57,13 @@ def universe(make_job):
     return [
         # Qualified: right size, right industry, three fresh roles, growth signal.
         make_job(company="Acme Manufacturing Inc.", title="Plant Manager", days_old=1,
-                 employees="51 to 200", industry="Industrial Manufacturing",
+                 employees="51 to 200", industry="Manufacturing",
                  company_website="https://www.acme-mfg.com",
                  company_url="https://www.indeed.com/cmp/Acme-Manufacturing",
                  description="Rapidly growing; new facility opening this year.",
                  applicant_count=8, external_id="acme-1"),
         make_job(company="Acme Manufacturing LLC", title="Welder", days_old=2,
-                 employees="51 to 200", industry="Industrial Manufacturing",
+                 employees="51 to 200", industry="Manufacturing",
                  company_website="https://www.acme-mfg.com", external_id="acme-2"),
         # Same employer, different board, no domain of its own -> must merge.
         make_job(company="Acme Manufacturing", title="Machinist", days_old=3,
@@ -195,25 +195,15 @@ def test_duplicate_prevention_is_idempotent_across_runs(runner, universe, now, r
 # ---------------------------------------------------------------------------
 # 6. POC ranking
 # ---------------------------------------------------------------------------
-def test_acceptance_6_poc_ranking(runner, universe, now):
+def test_contact_discovery_does_not_run_before_phase_6(runner, universe, now, recording_repo):
+    """Acme's team page is served, but nothing may read it before Phase 6."""
     report = runner.run(raw_jobs=universe, now=now)
 
-    acme = next(l for l in report.qualified if l.company_name == "acme manufacturing")
-    assert len(acme.contacts) >= 3, "brief asks for 3+ meaningful decision-makers"
-
-    priorities = [c["title_priority"] for c in acme.contacts]
-    assert priorities == sorted(priorities), "P1..P4 order must be strict"
-    assert priorities[0] == 1
-    assert acme.contacts[0]["name"] == "Jane Whitfield"
-    assert all(c["rank_score"] is not None for c in acme.contacts)
-
-
-def test_no_weak_contacts_are_invented(runner, universe, now):
-    report = runner.run(raw_jobs=universe, now=now)
-    for lead in report.qualified:
-        for contact in lead.contacts:
-            assert contact["name"]
-            assert contact["title_priority"] in (1, 2, 3, 4)
+    assert report.qualified
+    assert all(lead.contacts == [] and lead.emails == [] for lead in report.qualified + report.needs_review)
+    assert "contact" not in recording_repo.calls
+    assert not any(r.get("key") == "company_email" for r in recording_repo.calls.get("evidence", []))
+    assert runner.access.requested == [], "no company page is fetched"
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +223,7 @@ def test_every_stage_is_timed_and_reported(runner, universe, now):
     assert report.run_key
     assert list(report.stages) == [
         "discovery", "normalization", "job_deduplication", "freshness",
-        "company_identification", "qualification", "contacts",
+        "company_identification", "qualification", "persistence",
     ]
     assert all(s["status"] == "OK" and s["duration_ms"] >= 0 for s in report.stages.values())
     assert report.to_dict()["stages"] == report.stages

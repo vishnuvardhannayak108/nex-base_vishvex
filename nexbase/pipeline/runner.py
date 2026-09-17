@@ -9,11 +9,11 @@ Single entry point used by the API, the CLI and tests:
     5 Identify and deduplicate companies
     6 Qualify (direct employer, size, industry, hiring signals) and resolve
       official domains
-    7 Free / public contact discovery + POC ranking
+    7 Persist every company, its jobs and its qualification reasons
 
-Paid enrichment and email verification are not wired in: they run only on
-QUALIFIED companies behind budget logic, which does not exist yet. Nothing
-here sends email.
+Free / public contact discovery (Phase 6), paid enrichment and email
+verification are not executed here. ``nexbase.contacts`` and
+``nexbase.email.discovery`` stay available for Phase 6. Nothing here sends email.
 
 One :class:`AccessLayer` is shared for the whole run, so the rate limiter and
 the Camoufox budget are genuinely global rather than resetting per company.
@@ -28,22 +28,12 @@ from typing import Any
 
 from nexbase.access.fetcher import AccessLayer
 from nexbase.config import Settings, get_settings
-from nexbase.contacts.discovery import ContactDiscovery
-from nexbase.contacts.models import ContactCandidate
-from nexbase.contacts.ranking import ContactRanker
-from nexbase.core.enums import (
-    DiscoveryStage,
-    EmailStatus,
-    QualificationStatus,
-    SourcePriority,
-    SourceType,
-)
+from nexbase.core.enums import EmailStatus, QualificationStatus, SourcePriority
 from nexbase.core.models import RawJob
 from nexbase.db.repository import InertRepository, SupabaseRepository
 from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
 from nexbase.discovery.planner import DiscoveryPlan
 from nexbase.discovery.registry import SourceRegistry, build_registry
-from nexbase.email.discovery import EmailDiscovery
 from nexbase.logging_setup import bind_run, ensure_logging_configured, get_logger, stage
 from nexbase.pipeline.company_identity import CompanyIdentifier, FreshCompany
 from nexbase.pipeline.dedupe import JobDeduplicator
@@ -253,11 +243,9 @@ class PipelineRunner:
         self._domain_searches = 0
         #: Candidates too weak to attach, kept for a human decision.
         self._domain_review: dict[tuple[str, str], dict] = {}
-        self._stop_at: str | None = None
         #: Built per run when not injected, so run-scoped state (the ATS slice
         #: cache) never leaks between runs.
         self._registry = registry
-        self._contact_runs = 0
 
     def _audit(self, event: str, level: str = "INFO", **data) -> None:
         self.repo.insert_audit(
@@ -278,9 +266,10 @@ class PipelineRunner:
         """Run the pipeline for ``plan``.
 
         ``raw_jobs`` replaces discovery with already-collected postings.
-        ``stop_at`` may be 'before_contacts'.
+        ``stop_at`` ('before_contacts') is accepted for API and CLI
+        compatibility; contact discovery does not run before Phase 6, so every
+        run already stops there.
         """
-        self._stop_at = stop_at
         run_key = plan.run_key if plan is not None else (
             datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
         original_repo = self.repo
@@ -301,7 +290,6 @@ class PipelineRunner:
         finally:
             self.repo = original_repo
             self.access.repo = original_access_repo
-            self._stop_at = None
 
     # ------------------------------------------------------------------
     def _run(
@@ -316,7 +304,6 @@ class PipelineRunner:
         report = PipelineReport(run_key=run_key)
         if plan is not None:
             report.plan = plan.to_dict()
-        self._contact_runs = 0
         now = now or datetime.now(timezone.utc)
         self._audit("PIPELINE_START")
 
@@ -395,19 +382,9 @@ class PipelineRunner:
                 self._qualification_dict(fc, r) for fc, r in zip(fresh, qual_results)
             ]
 
-        # --- 7. Persist and process every company -------------------------
-        # Spend the contact-discovery budget on the best records first: a
-        # QUALIFIED company is worth its ~30 page fetches before one that is
-        # still NEEDS_REVIEW.
-        def _priority(fc):
-            res = result_map.get(fc.company.dedup_key)
-            status = getattr(res, "status", None)
-            rank = {QualificationStatus.QUALIFIED.value: 0,
-                    QualificationStatus.NEEDS_REVIEW.value: 1}.get(status, 2)
-            return (rank, -fc.hiring_intensity)
-
-        with stage(self.log, "contacts", report.stages):
-            for fc in sorted(fresh, key=_priority):
+        # --- 7. Persist every company --------------------------------------
+        with stage(self.log, "persistence", report.stages):
+            for fc in fresh:
                 self._process_company(fc, result_map, built_profiles, report)
 
         # --- Reporting ------------------------------------------------------
@@ -842,7 +819,9 @@ class PipelineRunner:
                     "employee_size_max": profile.employee_size_max,
                     "employee_size_source": profile.size_source,
                     "internal_ta_size": profile.internal_ta.ta_role_count,
-                    "internal_ta_verdict": "MATURE" if profile.internal_ta.is_mature else "OK",
+                    "internal_ta_verdict": (
+                        "MATURE" if result is not None
+                        and result.breakdown.get("internal_ta_verdict") == "MATURE" else "OK"),
                 }
             )
         if result is not None:
@@ -911,7 +890,7 @@ class PipelineRunner:
             self.repo.update_company(company_id, {"persistent_hiring_runs": runs})
 
     # ------------------------------------------------------------------
-    # Steps 7-9 for an accepted company
+    # The lead record for a QUALIFIED or NEEDS_REVIEW company
     # ------------------------------------------------------------------
     def _process_accepted(
         self, aggregate, fresh, result, profile, company_id, report
@@ -924,10 +903,7 @@ class PipelineRunner:
         if not website and resolved_domain:
             website = f"https://{resolved_domain}"
         job_urls = [j.evidence_url for j, _ in fresh.fresh_jobs if j.evidence_url]
-        board_urls = [j.company_url for j, _ in fresh.fresh_jobs if j.company_url]
-        job_titles = [j.title for j, _ in fresh.fresh_jobs]
-
-        lead = QualifiedLead(
+        return QualifiedLead(
             company_name=company_name,
             rejection_reasons=list(result.reasons),
             display_name=aggregate.company_name,
@@ -947,195 +923,6 @@ class PipelineRunner:
             evidence_url=job_urls[0] if job_urls else None,
             source_sites=aggregate.source_sites,
         )
-
-        if self._stop_at == "before_contacts":
-            return lead
-
-        # Contact scraping for NEEDS_REVIEW companies is configurable.
-        if (
-            result.status == QualificationStatus.NEEDS_REVIEW.value
-            and not self.settings.contacts_for_review_companies
-        ):
-            self.log.info(
-                "contact_discovery_deferred",
-                company=company_name,
-                reason="NEEDS_REVIEW",
-                flags=result.review_flags,
-            )
-            return lead
-
-        # Contact discovery costs ~30 page fetches per company. Without a
-        # ceiling a large run never reaches the end of its company list, so the
-        # budget is spent and then discovery stops - the remaining companies
-        # keep their jobs, evidence and review status.
-        if self._contact_runs >= self.settings.contacts_max_companies_per_run:
-            self.log.info(
-                "contact_discovery_budget_exhausted",
-                company=company_name,
-                limit=self.settings.contacts_max_companies_per_run,
-            )
-            lead.review_flags = list(lead.review_flags) + ["CONTACTS_NOT_ATTEMPTED"]
-            return lead
-        self._contact_runs += 1
-
-        # --- 7. Contact discovery -----------------------------------------
-        candidates: list[ContactCandidate] = []
-        page_emails: list[str] = []
-        found = None
-        try:
-            discovery = ContactDiscovery(
-                access=self.access, settings=self.settings, logger=self.log
-            )
-            found = discovery.discover(company_name, website, job_urls, board_urls)
-            candidates = found.candidates
-            page_emails = found.page_emails
-        except Exception as exc:
-            report.append_pitfall(
-                stage="CONTACT_DISCOVERY", company=company_name, reason=str(exc)
-            )
-
-        selected = ContactRanker(self.settings, self.log).select(candidates, job_titles)
-        contact_dicts = self._persist_contacts(company_id, selected)
-
-        # Addresses seen on the pages visited count as observed evidence even
-        # when they could not be attributed to a named person.
-        email_result = EmailDiscovery(self.log).discover(
-            contact_dicts,
-            extra_emails=list(aggregate.observed_emails) + page_emails,
-        )
-        # Contact discovery reads ~30 pages per company. If one of them stated
-        # an explicit headcount, that is free size evidence: record it and
-        # re-score, so an unknown-size company can clear review without any
-        # extra fetch. Explicit statements only - nothing is inferred.
-        size_found = getattr(found, "size_evidence", None) if found else None
-        if size_found is not None and profile is not None and not profile.size_known:
-            self._apply_free_size_evidence(company_id, fresh, profile, result,
-                                           lead, size_found)
-
-        lead.contacts = contact_dicts
-        lead.emails = email_result.preferred
-        lead.email_status = email_result.status
-        lead.observed_emails = [o.as_dict() for o in email_result.observed]
-        lead.named_contact_emails = [o.as_dict() for o in email_result.named]
-        lead.role_mailboxes = list(email_result.role)
-        lead.discovery_stages = list(getattr(found, "stages_used", []))
-        lead.portals_searched = sorted(
-            {j.source_site for j in fresh.company.jobs if j.source_site}
-        )
-        resolved_result = self._domain_results.get(aggregate.dedup_key)
-        if resolved_result is not None:
-            lead.domain_confidence = getattr(
-                getattr(resolved_result, "confidence", None), "value", None)
-            lead.domain_source = getattr(resolved_result, "source", None)
-        # A company mailbox is not a person, so it must not be forced into a
-        # contact row. It is recorded as company-level evidence instead, which
-        # keeps its provenance and stops it disappearing after the run.
-        self._persist_company_emails(
-            company_id, list(aggregate.observed_emails) + page_emails, website
-        )
-
-        return lead
-
-    # ------------------------------------------------------------------
-    def _apply_free_size_evidence(self, company_id, fresh, profile, result,
-                                  lead, evidence) -> None:
-        """Re-score a company whose size turned up on a page we already read."""
-        key = fresh.company.dedup_key
-        rebuilt = build_profile(
-            fresh,
-            persistent_hiring_runs=profile.persistent_hiring_runs,
-            enrichment=evidence.as_enrichment(),
-        )
-        rescored = QualificationGate(self.settings, self.log).qualify(
-            [fresh], {key: rebuilt})[0]
-
-        lead.employee_size = _size_label(rebuilt)
-        lead.employee_size_source = rebuilt.size_source
-        lead.status = rescored.status
-        lead.review_flags = rescored.review_flags
-        lead.score = rescored.score
-
-        if company_id is not None:
-            self.repo.update_company(company_id, {
-                "employee_size_min": rebuilt.employee_size_min,
-                "employee_size_max": rebuilt.employee_size_max,
-                "employee_size_source": rebuilt.size_source,
-                "qualification_status": rescored.status,
-                "review_flags": rescored.review_flags,
-            })
-            # Persisted against the company so the evidence is never orphaned.
-            self.repo.insert_evidence({
-                "record_type": "COMPANY", "record_id": company_id,
-                "key": "employee_size",
-                "value": f"{rebuilt.employee_size_min}-{rebuilt.employee_size_max}",
-                "url": evidence.url, "source_type": evidence.source,
-                "source_priority": int(SourcePriority.PUBLIC_WEB.value),
-                "raw_payload": {"snippet": evidence.snippet,
-                                "discovery_stage": "CONTACT_DISCOVERY"},
-            })
-        self.log.info("size_from_contact_pages", company=lead.company_name,
-                      size=lead.employee_size, status=rescored.status,
-                      url=evidence.url)
-
-    def _persist_company_emails(self, company_id, emails, source_url) -> int:
-        """Store addresses observed on a company's pages as company evidence.
-
-        Uses the existing ``evidence`` table rather than a new one: these are
-        observed facts with a URL, which is exactly what that table is for.
-        """
-        from nexbase.contacts.extraction import is_role_email
-
-        stored = 0
-        for address in dict.fromkeys(e.strip().lower() for e in emails if e):
-            self.repo.insert_evidence({
-                "record_type": "COMPANY",
-                "record_id": company_id,
-                "key": "company_email",
-                "value": address,
-                "url": source_url,
-                "source_type": SourceType.PUBLIC_WEB.value,
-                "source_priority": int(SourcePriority.PUBLIC_WEB.value),
-                "raw_payload": {
-                    "email_type": "ROLE" if is_role_email(address) else "UNATTRIBUTED",
-                    "discovery_stage": DiscoveryStage.PUBLIC_WEB.value,
-                    "verification_status": "PENDING",
-                },
-            })
-            stored += 1
-        if stored:
-            self.log.info("company_emails_recorded", count=stored)
-        return stored
-
-    def _persist_contacts(self, company_id, candidates) -> list[dict]:
-        out: list[dict] = []
-        for c in candidates:
-            row = {
-                "company_id": company_id,
-                "name": c.name,
-                "title": c.title,
-                "title_priority": c.title_priority,
-                "email": c.email,
-                "rank_score": c.rank_score,
-                "discovery_stage": c.discovery_stage,
-                "profile_url": c.profile_url,
-                "source_type": c.source_type,
-                "source_priority": c.source_priority,
-                "raw_payload": _json_safe(c.raw),
-            }
-            contact_id = self.repo.upsert_contact(row)
-            out.append(
-                {
-                    "id": contact_id,
-                    "name": c.name,
-                    "title": c.title,
-                    "title_priority": c.title_priority,
-                    "priority": c.priority,
-                    "email": c.email,
-                    "rank_score": c.rank_score,
-                    "discovery_stage": c.discovery_stage,
-                }
-            )
-        return out
 
     # ------------------------------------------------------------------
     @staticmethod

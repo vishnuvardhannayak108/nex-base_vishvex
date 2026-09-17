@@ -6,30 +6,32 @@ Rules (Master Plan, Phase 5):
   A range that crosses a limit ("1 to 50") is not known to be eligible, so it
   is reviewed too.
 - **Agency exclusion**: staffing, recruitment, executive search, intermediaries.
-- **Internal TA filter**: a mature in-house TA team rejects, a smaller one is
-  reviewed.
-- **Industry relevance** against the run's selected sector. A mismatch is
-  reviewed, not rejected: the industry comes from a keyword classifier that
-  mislabels real sector members (a "Restaurants & Food Service" label reads as
-  food manufacturing).
+- **Internal TA filter**: judged against ``INTERNAL_TA_REJECT_THRESHOLD`` and
+  ``INTERNAL_TA_REVIEW_THRESHOLD``. The Master Plan names the filter but sets
+  no numbers; those settings are the existing configuration, not plan rules.
+- **Industry relevance**: the observed industry must be the selected sector as
+  the NexBase taxonomy defines it. Anything else is reviewed, never rejected.
 - **Hiring signals** scoring, including the LinkedIn applicant signal (<= 20 is
-  positive, never a rejection).
+  positive, never a rejection). The score ranks companies; it decides nothing.
 
-Every rejection reason is collected, not just the first. A company with any
-review flag is NEEDS_REVIEW rather than rejected on a score its missing evidence
-held down. Only evidence actually observed is used - nothing is invented.
+Every rejection reason is collected, not just the first. Only evidence actually
+observed is used - nothing is invented.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
 
 from nexbase.config import Settings, get_settings
-from nexbase.core.enums import ClientIndustry, QualificationStatus
-from nexbase.discovery import taxonomy
+from nexbase.core.enums import QualificationStatus
 from nexbase.logging_setup import get_logger
 from nexbase.pipeline.company_identity import FreshCompany
-from nexbase.pipeline.profile import OBSERVED, CompanyProfile, build_profile, phrase_pattern
+from nexbase.pipeline.profile import (
+    OBSERVED,
+    CompanyProfile,
+    InternalTASignal,
+    build_profile,
+    phrase_pattern,
+)
 
 # ---------------------------------------------------------------------------
 # Intermediary detection (brief: exclude staffing, recruitment, exec search)
@@ -147,41 +149,39 @@ def evaluate_size(
 # ---------------------------------------------------------------------------
 # Industry relevance against the selected sector
 # ---------------------------------------------------------------------------
-#: NAICS publishes these two-digit codes as one sector (31-33, 44-45, 48-49).
-_NAICS_SECTOR_OF = {"32": "31", "33": "31", "45": "44", "49": "48"}
-
-
-@lru_cache(maxsize=None)
-def naics_sectors(client_sector: str) -> frozenset[str]:
-    """NAICS sectors a NexBase sector's industries sit in, from the BLS data."""
-    return frozenset(
-        _NAICS_SECTOR_OF.get(industry.naics3[:2], industry.naics3[:2])
-        for industry in taxonomy.load_industries()
-        if industry.client_industry == client_sector)
-
-
 def evaluate_industry(profile: CompanyProfile, sector: str | None) -> tuple[str, str | None]:
     """Return ``(verdict, reason)``: RELEVANT or REVIEW.
 
-    Only an industry observed about the employer can make a company relevant.
-    Anything else is reviewed with the reason.
+    RELEVANT only when an industry observed about the employer is the selected
+    sector itself. The NexBase taxonomy keeps Food & Beverage, Plastics/Rubber
+    and Industrial Equipment/Machinery apart from Manufacturing, and Warehousing
+    apart from Logistics, so a neighbouring sector is a mismatch to review - a
+    shared NAICS parent qualifies nothing.
     """
     if not sector:
         return "REVIEW", "SECTOR_NOT_SELECTED"
     if profile.industry_state != OBSERVED:
         return "REVIEW", "INDUSTRY_UNKNOWN"
-    industry = profile.client_industry
-    if industry is None:
+    if profile.client_industry is None:
         return "REVIEW", "INDUSTRY_UNCLASSIFIED"
-    if industry == sector:
+    if profile.client_industry == sector:
         return "RELEVANT", None
-    if naics_sectors(industry) & naics_sectors(sector):
-        # Manufacturing is all of NAICS 31-33, so a plastics or food
-        # manufacturer is a manufacturer. The reverse is not true.
-        if sector == ClientIndustry.MANUFACTURING.value:
-            return "RELEVANT", None
-        return "REVIEW", "INDUSTRY_ADJACENT_SECTOR"
     return "REVIEW", "INDUSTRY_MISMATCH"
+
+
+def evaluate_internal_ta(ta: InternalTASignal, settings: Settings) -> tuple[str, str | None]:
+    """Return ``(verdict, reason)``: MATURE (reject), POSSIBLE (review) or NONE.
+
+    Uses only the configured thresholds. A senior TA leader plus the review
+    threshold's worth of TA openings counts as mature.
+    """
+    count = ta.ta_role_count
+    if count >= settings.internal_ta_reject_threshold or (
+            ta.has_senior_ta_leader and count >= settings.internal_ta_review_threshold):
+        return "MATURE", "MATURE_INTERNAL_TA"
+    if count >= settings.internal_ta_review_threshold:
+        return "POSSIBLE", "POSSIBLE_INTERNAL_TA"
+    return "NONE", None
 
 
 def freshness_bonus(fresh: FreshCompany) -> float:
@@ -297,12 +297,14 @@ def score_company(
 
     # --- Internal TA filter ----------------------------------------------
     ta = profile.internal_ta
+    ta_verdict, ta_reason = evaluate_internal_ta(ta, settings)
     breakdown["internal_ta_roles"] = ta.ta_role_count
     breakdown["internal_ta_senior_leader"] = ta.has_senior_ta_leader
-    if ta.ta_role_count >= settings.internal_ta_reject_threshold or ta.is_mature:
-        reasons.append("MATURE_INTERNAL_TA")
-    elif ta.ta_role_count >= settings.internal_ta_review_threshold:
-        review_flags.append("POSSIBLE_INTERNAL_TA")
+    breakdown["internal_ta_verdict"] = ta_verdict
+    if ta_verdict == "MATURE":
+        reasons.append(ta_reason)
+    elif ta_reason:
+        review_flags.append(ta_reason)
 
     # --- Company identity -------------------------------------------------
     breakdown["identity_basis"] = fresh.company.identity_basis
@@ -333,15 +335,12 @@ def score_company(
     breakdown["total"] = round(score, 2)
 
     # --- Verdict ----------------------------------------------------------
-    # A rule failure rejects. Missing or ambiguous evidence is reviewed, never
-    # rejected on a score that the missing evidence held down.
+    # A rule failure rejects; missing or ambiguous evidence is reviewed. The
+    # score only ranks.
     if reasons:
         status = QualificationStatus.REJECTED
     elif review_flags:
         status = QualificationStatus.NEEDS_REVIEW
-    elif score < settings.qualify_threshold:
-        reasons.append("LOW_SCORE")
-        status = QualificationStatus.REJECTED
     else:
         status = QualificationStatus.QUALIFIED
 

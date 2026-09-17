@@ -55,8 +55,10 @@ class Settings(BaseSettings):
     #: unknown -> NEEDS_REVIEW.
     size_filter_min: int = 11
     size_filter_max: int = 200
-    qualify_threshold: float = 50.0
-    #: Internal TA filter: this many distinct TA/recruiting staff => mature TA org.
+    #: Internal TA filter. The Master Plan sets no numbers: these are the
+    #: existing defaults, not plan rules. TA/recruiting openings at or above
+    #: the reject threshold (or a senior TA leader plus the review threshold)
+    #: reject; at or above the review threshold, review.
     internal_ta_reject_threshold: int = 4
     internal_ta_review_threshold: int = 2
     #: LinkedIn applicant signal: at or below this is positive, never a reject.
@@ -92,9 +94,6 @@ class Settings(BaseSettings):
     #: Three is a target, not a cap.
     contacts_target: int = 3
     contacts_max: int = 6
-    contacts_for_review_companies: bool = True
-    #: Each company costs ~30 page fetches; QUALIFIED companies go first.
-    contacts_max_companies_per_run: int = 40
     #: Pause before re-checking a host that failed to resolve once.
     contacts_dns_retry_delay_seconds: float = 1.0
     contacts_homepage_max_links: int = 6

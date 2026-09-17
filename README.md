@@ -55,14 +55,15 @@ Shared infrastructure:
 | 3 | Direct sources + ATS + JobSpy cleanup | **done** |
 | 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | **done** |
-| 6 | Free/public contact discovery | pending (existing code runs) |
+| 6 | Free/public contact discovery | pending (code kept, not executed) |
 | 7 | Enrichment waterfall ZoomInfo -> Apollo -> Apify | pending (not wired) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
 The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
-company identification -> qualify -> resolve domains -> free contact discovery + ranking. Paid enrichment
-and email verification are **not called** until their budget logic exists.
+company identification -> qualify -> resolve domains -> persist. Free contact discovery
+(`nexbase/contacts`) is **not executed** until Phase 6; paid enrichment and email
+verification are **not called**.
 
 ## Planner and source registry
 
@@ -148,7 +149,7 @@ python -m nexbase.cli sectors --sector Manufacturing  # sectors + suggested jobs
 python -m nexbase.cli sources                         # registry: class, handler, enabled
 python -m nexbase.cli plan --sector Manufacturing --job "Warehouse Manager"
 python -m nexbase.cli run --sector Manufacturing --job "Warehouse Manager" --dry-run
-python -m nexbase.cli run ... --stop-at before_contacts
+python -m nexbase.cli run ... --stop-at before_contacts   # accepted; every run stops there until Phase 6
 python -m nexbase.cli export leads.csv --status QUALIFIED
 ```
 
@@ -178,27 +179,33 @@ rate limited per caller (`NEXBASE_API_RATE_LIMIT`, default 60/min).
 - **Freshness:** postings older than 14 days, undated or future-dated are dropped.
 - **Intermediaries:** staffing, recruiting, executive search and RPO are rejected
   on whole words in the company name or explicit self-description.
-- **Internal TA:** 4+ TA/recruiting openings (or a senior TA leader plus 2) reject
-  (`MATURE_INTERNAL_TA`); 2-3 are reviewed (`POSSIBLE_INTERNAL_TA`).
-- **Industry relevance** is judged against the run's selected sector, never a
-  global list. Only an industry observed about the employer decides it:
-  - same sector -> relevant; a manufacturing subsector in a `Manufacturing` run
-    -> relevant;
-  - same NAICS sector otherwise (e.g. Warehousing vs Logistics) ->
-    `INDUSTRY_ADJACENT_SECTOR` review;
-  - any other observed industry -> `INDUSTRY_MISMATCH` review (never a
-    rejection: the keyword classifier mislabels real sector members);
-  - an unclassifiable label -> `INDUSTRY_UNCLASSIFIED`; no observed industry ->
-    `INDUSTRY_UNKNOWN`; no sector -> `SECTOR_NOT_SELECTED` (all review).
-- **Hiring signals** add points: size and relevance (rule outcomes), freshness,
-  number of openings, growth wording, persistent hiring across runs, and LinkedIn
-  applicants (<= 20 adds the most; a high or missing count adds nothing and never
-  rejects).
+- **Internal TA:** the Master Plan names the filter but sets no thresholds. It uses
+  the existing configuration only: TA/recruiting openings at or above
+  `INTERNAL_TA_REJECT_THRESHOLD` (default 4), or a senior TA leader plus
+  `INTERNAL_TA_REVIEW_THRESHOLD` (default 2), reject (`MATURE_INTERNAL_TA`); at or
+  above the review threshold, `POSSIBLE_INTERNAL_TA` review.
+- **Industry relevance** is judged against the run's selected sector, using the
+  NexBase taxonomy as the source of truth (`data/processed/naics_to_industry.csv`).
+  Only an industry label a source published about the employer counts; words in
+  job descriptions do not. The label is placed in a sector through the official
+  2022 NAICS titles (`nexbase/discovery/data/naics_titles.csv`, built by
+  `scripts/build_industry_universe.py`): a label that is a sector name is that
+  sector; otherwise the closest NAICS titles decide, and a tie between two sectors
+  or a non-NexBase industry places nothing.
+  - the label's sector is the selected sector -> relevant;
+  - another sector, including a neighbouring one (Plastics/Rubber in a
+    Manufacturing run, Warehousing in a Logistics run) -> `INDUSTRY_MISMATCH` review;
+  - a label no sector can be read from -> `INDUSTRY_UNCLASSIFIED`; no label ->
+    `INDUSTRY_UNKNOWN`; no sector -> `SECTOR_NOT_SELECTED` (all review, never a
+    rejection).
+- **Hiring signals** add points to a score that ranks companies and decides
+  nothing: size and relevance, freshness, number of openings, growth wording,
+  persistent hiring across runs, and LinkedIn applicants (<= 20 adds the most; a
+  high or missing count adds nothing).
 - **Outcomes:** any rule failure -> `REJECTED` with every failing reason; else any
-  review flag -> `NEEDS_REVIEW`; else a score below `QUALIFY_THRESHOLD` ->
-  `REJECTED` (`LOW_SCORE`); else `QUALIFIED`. Reasons are stored on the company
-  (`qualification_reasons`, `review_flags`, `qualification_breakdown`) and as one
-  `qualification_reasons` row each with its `outcome`.
+  review flag -> `NEEDS_REVIEW`; else `QUALIFIED`. Reasons are stored on the
+  company (`qualification_reasons`, `review_flags`, `qualification_breakdown`) and
+  as one `qualification_reasons` row each with its `outcome`.
 
 ## Observability
 

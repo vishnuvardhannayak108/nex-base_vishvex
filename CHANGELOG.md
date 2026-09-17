@@ -8,6 +8,47 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 5 decisions applied (2026-09-17)
+
+Tests: 758 before, **773 passed** after (0 failed).
+
+### Changed
+
+- **Internal TA** uses only `INTERNAL_TA_REJECT_THRESHOLD` / `INTERNAL_TA_REVIEW_THRESHOLD`
+  through `qualification.evaluate_internal_ta`. The hardcoded `is_mature` (4, or a
+  senior leader plus 2) is gone; its senior-leader rule now reads the review
+  threshold. Defaults (4 / 2) give the same verdicts as before. The thresholds are
+  existing configuration, not Master Plan rules.
+- **Industry relevance** follows the NexBase taxonomy: only the selected sector
+  itself is relevant. A plastics or machinery company in a Manufacturing run, or a
+  warehouse in a Logistics run, is `INDUSTRY_MISMATCH` review.
+- **Industry classifier**: a source's industry label is placed through the
+  official 2022 NAICS titles (`data/raw/naics/2022_NAICS_Structure.xlsx` ->
+  `nexbase/discovery/data/naics_titles.csv`, with each code's sector from
+  `naics_to_industry.csv`) by `taxonomy.sector_for_industry_label`. Verified:
+  "Automotive Dealers" -> Retail (NAICS 441), "Building Materials" -> Retail (4441),
+  "Restaurants & Food Service" -> unclassified (ties 722 restaurants with 6242
+  Community Food Services), "Industrial Manufacturing" -> unclassified (ties
+  325120 Industrial Gas with 3332 Industrial Machinery).
+- **Free contact discovery no longer runs in the pipeline.** Stage 7 is now
+  `persistence`: companies, jobs, hiring history and qualification reasons only.
+  No company page is fetched. `stop_at="before_contacts"` stays accepted by the
+  runner, API and CLI; every run already stops there.
+- Test data labelled "Industrial Manufacturing" that must qualify for
+  Manufacturing now uses "Manufacturing" (the e2e universe, `test_size_resolution`).
+
+### Removed
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| `qualify_threshold` setting, `QUALIFY_THRESHOLD` in `.env.example`, `LOW_SCORE` branch | `score_company` only | `test_qualification.py` (1 assertion) | Unreachable: a company reaching it had direct employer 25 + size 15 + industry 12 + openings >= 3 = 55 > 50. Removing it changes no verdict; the score still ranks |
+| `InternalTASignal.is_mature` | `score_company`, `runner._persist_company` (`internal_ta_verdict`) | `test_qualification.py` (1 assertion) | Hardcoded thresholds that ignored the configuration |
+| `naics_sectors`, `_NAICS_SECTOR_OF`, Manufacturing-parent rule, `INDUSTRY_ADJACENT_SECTOR` | `evaluate_industry` only | `test_qualification.py` params | A shared NAICS parent qualified or distinguished nothing the taxonomy defines |
+| `profile._INDUSTRY_PATTERNS`, `profile.classify_industry` | `profile._set_observed_industry`, `profile._apply_industry` | `test_qualification.py` (2 tests, replaced) | First-match keyword list; misclassified real businesses |
+| Industry from job-description keywords (`industry_source = JOB_DESCRIPTION`) | `profile._apply_industry` | `test_qualification.py` (1 test, replaced) | A broad keyword match over posting text, not evidence about the employer |
+| Runner contact path: `ContactDiscovery` / `ContactRanker` / `EmailDiscovery` calls in `_process_accepted`, `_persist_contacts`, `_persist_company_emails`, `_apply_free_size_evidence`, `_contact_runs`, `_stop_at` | `runner.py` only | `test_hardening.py`: `test_resolved_domain_reaches_contact_discovery`, `test_page_only_emails_are_recorded_as_company_evidence`, `test_a_lead_with_only_a_role_mailbox_is_still_a_lead`, `test_free_size_evidence_clears_review_and_is_persisted`, `test_contact_discovery_runs_for_review_companies_by_default`; `test_pipeline_e2e.py`: `test_acceptance_6_poc_ranking`, `test_no_weak_contacts_are_invented` | Phase 6 functionality executing in Phase 5, and on NEEDS_REVIEW companies although the plan limits it to qualified ones. `nexbase/contacts/*` and `nexbase/email/discovery.py` are kept, with their own tests in `test_contacts.py`. Replaced by `test_contact_discovery_does_not_run_before_phase_6` |
+| Settings `contacts_for_review_companies`, `contacts_max_companies_per_run` | `runner._process_accepted` only | `test_hardening.py` (removed above) | Configured only the removed runner path |
+
 ## Phase 5 audit correction (2026-09-16)
 
 An industry mismatch no longer rejects. `INDUSTRY_NOT_RELEVANT` (rejection) and

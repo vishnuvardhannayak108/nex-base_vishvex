@@ -195,7 +195,7 @@ def _runner(settings, repo, resolver):
 def _sizeless(make_job, name="Mystery Mfg"):
     """A company no job board gave a headcount for."""
     return [make_job(company=name, title=t, days_old=1, employees=None,
-                     industry="Industrial Manufacturing",
+                     industry="Manufacturing",
                      company_website=f"https://{name.lower().replace(' ', '')}.com",
                      description="Rapidly growing, new facility.", external_id=f"{name}-{t}")
             for t in ("Machinist", "Welder", "Press Operator")]

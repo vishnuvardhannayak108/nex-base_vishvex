@@ -239,39 +239,6 @@ def test_location_key(location, expected):
     assert normalize_location(location).key == expected
 
 
-def test_resolved_domain_reaches_contact_discovery(settings, make_job, now):
-    """The resolved domain used to be persisted and then used by nothing."""
-    from nexbase.pipeline.domain_resolver import Confidence, DomainResult
-
-    class Resolver:
-        def resolve(self, company_name, existing_domain=None, source_urls=None,
-                    location=None):
-            return DomainResult("mysterymfg.com", Confidence.HIGH, "SEARCH",
-                                evidence_url="https://mysterymfg.com",
-                                signals={"name_affinity": 0.95})
-
-    page = "<html><body><a href='mailto:ceo@mysterymfg.com'>Dana Reed, CEO</a></body></html>"
-    access = StubAccess({"mysterymfg.com": page}, settings=settings)
-    settings.contacts_for_review_companies = True
-
-    runner = PipelineRunner(settings=settings, repo=None, access=access,
-                            domain_resolver=Resolver())
-    from nexbase.db.repository import InertRepository
-
-    runner.repo = InertRepository()
-    runner.run(
-        raw_jobs=[make_job(company="Mystery Mfg", title=t, company_website=None,
-                           description="Rapidly growing, expanding, new facility.",
-                           external_id=f"m-{t}")
-                  for t in ("Machinist", "Welder", "Press Operator")],
-        now=now, persist=False,
-    )
-
-    assert any("mysterymfg.com" in u for u in access.requested), (
-        "contact discovery must visit the resolved domain"
-    )
-
-
 # ===========================================================================
 # Email extraction and preservation
 # ===========================================================================
@@ -592,46 +559,6 @@ def test_no_recurring_schedule_is_served_anywhere():
         assert ".serve(" not in source, f"{path} serves a flow on a schedule"
 
 
-def test_page_only_emails_are_recorded_as_company_evidence(settings, make_job, now):
-    """A role mailbox is not a person, so it is evidence, not a contact row."""
-    from tests.conftest import RecordingRepo
-
-    repo = RecordingRepo()
-    page = (
-        "<html><body>"
-        "<a href='mailto:hrservicecenter@acmemfg.com'>HR</a>"
-        "</body></html>"
-    )
-    runner = PipelineRunner(
-        settings=settings, repo=repo,
-        access=StubAccess({"acmemfg.com": page}, settings=settings),
-    )
-    runner.run(
-        raw_jobs=[make_job(company="Acme Manufacturing", title=t,
-                           company_website="https://acmemfg.com",
-                           employees="51 to 200", industry="Industrial Manufacturing",
-                           description="Rapidly growing, expanding, new facility.",
-                           external_id=f"a-{t}")
-                  for t in ("Plant Manager", "Welder", "Machinist")],
-        now=now,
-    )
-
-    company_emails = [
-        row for row in repo.calls.get("evidence", [])
-        if row.get("key") == "company_email"
-    ]
-    assert company_emails, "a page-only address must survive the run"
-    row = company_emails[0]
-    assert row["value"] == "hrservicecenter@acmemfg.com"
-    assert row["raw_payload"]["email_type"] == "ROLE"
-    assert row["url"]
-    # It is evidence, never a person.
-    assert all(
-        c.get("email") != "hrservicecenter@acmemfg.com"
-        for c in repo.calls.get("contact", [])
-    )
-
-
 def test_pandas_nat_is_not_treated_as_a_posting_date():
     """NaT is a datetime subclass and truthy, so it crashed the live run."""
     import pandas as pd
@@ -891,11 +818,6 @@ def test_call_to_action_text_is_never_a_person(settings):
     names = {c.name for c in extract_contacts_from_html(html) if c.name}
     assert "Dana Reed" in names
     assert not {n for n in names if n.lower() in ("email us", "text message")}
-
-
-def test_contact_discovery_runs_for_review_companies_by_default(settings):
-    """Most companies land in NEEDS_REVIEW; skipping them made yield structural."""
-    assert settings.contacts_for_review_companies is True
 
 
 def test_board_adapters_fetch_detail_pages_for_missing_descriptions(settings):
@@ -1181,30 +1103,6 @@ def test_role_mailbox_is_never_attributed_to_a_person():
     assert result.role == ["hr@acme.com"]
 
 
-def test_a_lead_with_only_a_role_mailbox_is_still_a_lead(settings, make_job, now):
-    from nexbase.core.enums import EmailStatus
-    from nexbase.db.repository import InertRepository
-
-    page = "<html><body><a href='mailto:hr@acmemfg.com'>HR</a></body></html>"
-    runner = PipelineRunner(settings=settings, repo=InertRepository(),
-                            access=StubAccess({"acmemfg.com": page}, settings=settings))
-    report = runner.run(
-        raw_jobs=[make_job(company="Acme Manufacturing", title=t,
-                           company_website="https://acmemfg.com",
-                           employees="51 to 200", industry="Industrial Manufacturing",
-                           description="Rapidly growing, expanding, new facility.",
-                           external_id=f"a-{t}")
-                  for t in ("Plant Manager", "Welder", "Machinist")],
-        now=now, persist=False,
-    )
-    leads = report.qualified + report.needs_review
-    assert leads, "the company must not be dropped for lacking a named contact"
-    lead = leads[0]
-    assert lead.email_status == EmailStatus.ROLE_EMAIL_FOUND.value
-    assert "hr@acmemfg.com" in lead.role_mailboxes
-    assert lead.named_contact_emails == []
-
-
 def test_lead_exposes_the_fields_the_output_spec_requires(settings, make_job, now):
     from nexbase.db.repository import InertRepository
 
@@ -1430,39 +1328,6 @@ def test_a_page_without_a_headcount_records_nothing(settings):
     report = ContactDiscoveryReport(candidates=[])
     disc._harvest("https://acmefab.com", DiscoveryStage.PUBLIC_WEB, report, "acme")
     assert report.size_evidence is None
-
-
-def test_free_size_evidence_clears_review_and_is_persisted(settings, make_job, now):
-    """An unknown-size company should not stay in review when a page states it."""
-    from tests.conftest import RecordingRepo
-
-    page = (
-        "<html><body><p>Acme Manufacturing employs 140 people.</p>"
-        "<a href='mailto:d.reed@acmemfg.com'>Dana Reed, COO</a></body></html>"
-    )
-    repo = RecordingRepo()
-    runner = PipelineRunner(
-        settings=settings, repo=repo,
-        access=StubAccess({"acmemfg.com": page}, settings=settings))
-    report = runner.run(
-        raw_jobs=[make_job(company="Acme Manufacturing", title=t,
-                           company_website="https://acmemfg.com",
-                           employees=None, industry="Industrial Manufacturing",
-                           description="Rapidly growing, expanding, new facility.",
-                           external_id=f"a-{t}")
-                  for t in ("Plant Manager", "Welder", "Machinist")],
-        now=now,
-    )
-    lead = (report.qualified + report.needs_review)[0]
-    assert lead.employee_size == "140"
-    assert lead.employee_size_source == "CONTACT_PAGE"
-    assert "EMPLOYEE_SIZE_UNKNOWN" not in lead.review_flags
-
-    sized = [e for e in repo.calls.get("evidence", [])
-             if e.get("key") == "employee_size"]
-    assert sized, "the evidence must be persisted"
-    assert sized[-1]["record_id"] is not None, "evidence must not be orphaned"
-    assert sized[-1]["url"]
 
 
 def test_qualification_reasons_stay_auditable(settings, make_job, now):

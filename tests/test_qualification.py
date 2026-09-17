@@ -5,13 +5,19 @@ import pytest
 
 from nexbase.core.enums import QualificationStatus
 from nexbase.pipeline.company_identity import prepare_companies
+from nexbase.discovery.taxonomy import sector_for_industry_label
 from nexbase.pipeline.profile import (
+    InternalTASignal,
     build_profile,
-    classify_industry,
     detect_internal_ta,
     parse_employee_range,
 )
-from nexbase.pipeline.qualification import detect_agency, evaluate_size, score_company
+from nexbase.pipeline.qualification import (
+    detect_agency,
+    evaluate_internal_ta,
+    evaluate_size,
+    score_company,
+)
 
 
 def _fresh(jobs, settings, now):
@@ -75,27 +81,36 @@ def test_oversize_is_rejected(make_job, settings, now):
 # Industry
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    "text,expected",
+    "label,expected",
     [
-        ("Industrial Manufacturing", "Manufacturing"),
-        ("General Contractor", "Construction"),
+        # A label that is a NexBase sector name.
+        ("Manufacturing", "Manufacturing"),
+        ("Construction", "Construction"),
+        ("Retail", "Retail"),
+        ("Plastics/Rubber", "Plastics/Rubber"),
+        # Official NAICS titles, at any level, through naics_to_industry.csv.
+        ("Automotive Dealers", "Retail"),                   # 441, not Manufacturing
+        ("Building Materials", "Retail"),                   # 4441 dealers
+        ("Motor Vehicle Manufacturing", "Manufacturing"),   # 3361
+        ("Industrial Machinery Manufacturing", "Industrial Equipment/Machinery"),  # 3332
+        ("Warehousing", "Warehousing & Distribution"),      # 493 beats its parent 48-49
+        ("Truck Transportation", "Logistics & Transportation"),
         ("Hotels & Motels", "Hospitality/Hotels"),
-        ("Commercial Property Management", "Property Management/Real Estate"),
-        ("Trucking & Freight", "Logistics & Transportation"),
-        ("Food Production", "Food & Beverage Manufacturing"),
-        ("Injection Molding", "Plastics/Rubber"),
-        ("Fulfillment Center", "Warehousing & Distribution"),
-        ("Investment Banking", None),
+        ("Real Estate", "Property Management/Real Estate"),
+        # Ambiguous under the taxonomy: equally close to two sectors.
+        ("Restaurants & Food Service", None),   # 722 restaurants vs 6242 Community Food Services
+        ("Food And Beverages", None),           # F&B Manufacturing vs 445 Food and Beverage Retailers
+        ("Industrial Manufacturing", None),     # 325120 Industrial Gas vs 3332 Industrial Machinery
+        # Outside every NexBase sector, or no NAICS title at all.
+        ("Hospitals and Health Care", None),
+        ("Insurance", None),
+        ("Automotive", None),
+        ("", None),
+        (None, None),
     ],
 )
-def test_classify_industry_covers_all_ten_brief_industries(text, expected):
-    assert classify_industry(text) == expected
-
-
-def test_hospitality_and_real_estate_are_no_longer_missing():
-    """Both were absent from the old keyword list."""
-    assert classify_industry("Hotel & Resort Operations") == "Hospitality/Hotels"
-    assert classify_industry("Real Estate Leasing") == "Property Management/Real Estate"
+def test_an_industry_label_is_placed_by_the_naics_titles(label, expected):
+    assert sector_for_industry_label(label) == expected
 
 
 def test_industry_inferred_from_titles_is_only_a_hint(make_job, settings, now):
@@ -157,7 +172,7 @@ def test_single_hr_manager_is_not_disqualifying():
     """Brief states this explicitly."""
     signal = detect_internal_ta(["HR Manager", "Plant Manager", "Welder"])
     assert signal.ta_role_count == 0
-    assert signal.is_mature is False
+    assert signal.has_senior_ta_leader is False
 
 
 def test_mature_internal_ta_rejected(make_job, settings, now):
@@ -269,7 +284,7 @@ def test_unverified_industry_earns_no_bonus_and_flags_review(make_job, settings,
 
 def test_observed_industry_still_counts(make_job, settings, now):
     job = make_job(company="Real Brewery", title="Brewer", employees="51 to 200",
-                   industry="Food And Beverages", days_old=1,
+                   industry="Breweries", days_old=1,
                    sector="Food & Beverage Manufacturing")
     fresh = _fresh([job], settings, now)[0]
 
@@ -284,7 +299,7 @@ def test_an_observed_industry_from_another_sector_is_reviewed_with_its_reason(
         make_job, settings, now):
     """The Molson Coors case: a brewery surfaced by a warehousing query."""
     job = make_job(company="Real Brewery", title="Brewer", employees="51 to 200",
-                   industry="Food And Beverages", sector="Warehousing & Distribution")
+                   industry="Breweries", sector="Warehousing & Distribution")
     result = score_company(_fresh([job], settings, now)[0], settings=settings)
     assert result.status == QualificationStatus.NEEDS_REVIEW.value
     assert result.review_flags == ["INDUSTRY_MISMATCH"]
@@ -321,25 +336,52 @@ def test_size_rule_boundaries(make_job, settings, now, employees, status, code):
         assert code in result.reasons + result.review_flags
 
 
-def test_unknown_size_is_reviewed_even_when_the_score_is_low(make_job, settings, now):
-    """Unknown size never earns its bonus, so it must not become LOW_SCORE."""
+def test_unknown_size_is_reviewed_whatever_the_score(make_job, settings, now):
     result = _known(make_job, settings, now, employees=None, industry=None,
                     title="Zorb Wrangler", days_old=13)
-    assert result.score < settings.qualify_threshold
     assert result.status == QualificationStatus.NEEDS_REVIEW.value
     assert result.reasons == []
 
 
+def test_the_score_ranks_but_never_decides(make_job, settings, now):
+    """A company passing every rule qualifies however weak its hiring signals."""
+    weak = _known(make_job, settings, now, days_old=13)
+    strong = _known(make_job, settings, now, days_old=1, applicant_count=5,
+                    description="Rapidly growing, new facility, expansion.")
+    assert weak.status == strong.status == QualificationStatus.QUALIFIED.value
+    assert weak.score < strong.score
+    assert not hasattr(settings, "qualify_threshold")
+
+
+@pytest.mark.parametrize("roles,senior,reject_at,review_at,verdict", [
+    (4, False, 4, 2, "MATURE"),
+    (3, False, 4, 2, "POSSIBLE"),
+    (2, True, 4, 2, "MATURE"),       # a senior TA leader plus the review threshold
+    (1, True, 4, 2, "NONE"),
+    (4, False, 6, 3, "POSSIBLE"),    # the configuration decides, nothing is hardcoded
+    (2, True, 6, 3, "NONE"),
+    (6, False, 6, 3, "MATURE"),
+])
+def test_internal_ta_uses_only_the_configured_thresholds(settings, roles, senior,
+                                                         reject_at, review_at, verdict):
+    settings.internal_ta_reject_threshold = reject_at
+    settings.internal_ta_review_threshold = review_at
+    signal = InternalTASignal(ta_role_count=roles, has_senior_ta_leader=senior)
+    assert evaluate_internal_ta(signal, settings)[0] == verdict
+
+
 @pytest.mark.parametrize("sector,industry,status,code", [
-    ("Manufacturing", "Plastics", "QUALIFIED", None),                     # a subsector of manufacturing
-    ("Plastics/Rubber", "Industrial Manufacturing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
-    ("Logistics & Transportation", "Warehousing", "NEEDS_REVIEW", "INDUSTRY_ADJACENT_SECTOR"),
+    ("Manufacturing", "Motor Vehicle Manufacturing", "QUALIFIED", None),
+    # The taxonomy keeps these apart: a neighbouring sector is reviewed.
+    ("Manufacturing", "Plastics", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Manufacturing", "Industrial Machinery Manufacturing", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Logistics & Transportation", "Warehousing", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Manufacturing", "Automotive Dealers", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Retail", "Automotive Dealers", "QUALIFIED", None),
+    ("Retail", "Building Materials", "QUALIFIED", None),
+    ("Hospitality/Hotels", "Restaurants & Food Service", "NEEDS_REVIEW", "INDUSTRY_UNCLASSIFIED"),
     ("Construction", "Hospitals and Health Care", "NEEDS_REVIEW", "INDUSTRY_UNCLASSIFIED"),
-    ("Construction", "Hotels", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
-    # The classifier reads these as food manufacturing / construction; a
-    # mismatch must never reject a real member of the sector.
-    ("Hospitality/Hotels", "Restaurants & Food Service", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
-    ("Retail", "Building Materials", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
+    ("Construction", "Hotels & Motels", "NEEDS_REVIEW", "INDUSTRY_MISMATCH"),
     (None, "Manufacturing", "NEEDS_REVIEW", "SECTOR_NOT_SELECTED"),
 ])
 def test_industry_relevance_to_the_selected_sector(make_job, settings, now,
@@ -350,17 +392,18 @@ def test_industry_relevance_to_the_selected_sector(make_job, settings, now,
         assert code in result.reasons + result.review_flags
 
 
-def test_a_description_keyword_mismatch_is_reviewed_not_rejected(make_job, settings, now):
-    result = _known(make_job, settings, now, sector="Construction", industry=None,
-                    title="Zorb Wrangler", description="Our hotel and resort team.")
-    assert result.breakdown["industry_source"] == "JOB_DESCRIPTION"
-    assert result.status == QualificationStatus.NEEDS_REVIEW.value
-    assert "INDUSTRY_MISMATCH" in result.review_flags
+def test_job_description_words_are_not_industry_evidence(make_job, settings, now):
+    """Keywords in a posting ("manufacturing floor") say nothing reliable about the employer."""
+    result = _known(make_job, settings, now, industry=None, title="Zorb Wrangler",
+                    description="Join our manufacturing floor and hotel catering team.")
+    assert result.breakdown["industry_source"] != "JOB_DESCRIPTION"
+    assert result.breakdown["industry_verdict"] == "REVIEW"
+    assert "INDUSTRY_UNKNOWN" in result.review_flags
 
 
 def test_every_rejection_reason_is_reported(make_job, settings, now):
     result = _known(make_job, settings, now, company="Bolt Staffing Group",
-                    employees="5,000 to 10,000", industry="Hotels")
+                    employees="5,000 to 10,000", industry="Hotels & Motels")
     assert result.status == QualificationStatus.REJECTED.value
     assert result.reasons == ["STAFFING_AGENCY", "EMPLOYEE_SIZE_ABOVE_MAX"]
     assert result.review_flags == ["INDUSTRY_MISMATCH"], "recorded alongside"

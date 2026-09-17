@@ -307,7 +307,7 @@ def test_every_stage_is_timed_and_reported(runner, universe, now):
     assert list(report.stages) == [
         "discovery", "normalization", "job_deduplication", "freshness",
         "company_identification", "qualification", "persistence", "contact_discovery",
-        "enrichment",
+        "enrichment", "poc_ranking", "email_verification",
     ]
     assert all(s["status"] == "OK" and s["duration_ms"] >= 0 for s in report.stages.values())
     assert report.to_dict()["stages"] == report.stages

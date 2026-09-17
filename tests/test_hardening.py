@@ -517,33 +517,27 @@ def _dependency_callables(dependant):
     return found
 
 
-def test_zerobounce_key_never_travels_in_the_url(monkeypatch, settings):
+def test_zerobounce_key_never_travels_in_the_url(settings):
+    """Documented /v2/validate, key in the form-encoded POST body, never the URL."""
+    import httpx
+
     import nexbase.email.verification as ver
 
     settings.zerobounce_api_key = "secret-key"
     captured = {}
 
-    class Response:
-        def raise_for_status(self):
-            return None
+    def handler(request):
+        captured.update(method=request.method, url=str(request.url), body=request.content,
+                        auth=request.headers.get("Authorization"))
+        return httpx.Response(200, json={"address": "jane@acme.com", "status": "valid"})
 
-        def json(self):
-            return {"status": "valid"}
-
-    def fake_post(url, json=None, headers=None, timeout=None):
-        captured.update(url=url, json=json, headers=headers)
-        return Response()
-
-    monkeypatch.setattr(ver.httpx, "post", fake_post)
-    monkeypatch.setattr(
-        ver.httpx, "get",
-        lambda *a, **k: pytest.fail("verification must not use a GET query string"),
-    )
-
-    ver.EmailVerifier(settings).verify("jane@acme.com")
-    assert "secret-key" not in captured["url"]
-    assert captured["headers"]["Authorization"] == "Bearer secret-key"
-    assert captured["json"] == {"email": "jane@acme.com"}
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = ver.EmailVerifier(settings, client=client).verify("jane@acme.com")
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://api.zerobounce.net/v2/validate"
+    assert "secret-key" not in captured["url"] and captured["auth"] is None
+    assert b"api_key=secret-key" in captured["body"] and b"email=jane%40acme.com" in captured["body"]
+    assert result.status == "VALID"
 
 
 # ===========================================================================

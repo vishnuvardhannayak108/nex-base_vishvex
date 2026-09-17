@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     apollo_api_url: str = "https://api.apollo.io/api/v1"
     zerobounce_api_key: str = ""
     zerobounce_api_url: str = "https://api.zerobounce.net/v2"
+    #: Paid verification of ranked POC emails. Off until the client approves
+    #: automatic paid verification.
+    email_verification_enabled: bool = False
+    email_verification_max_per_run: int = 50
+    #: A VALID / INVALID / RISKY verdict younger than this is reused.
+    email_verification_refresh_days: int = 30
 
     # ------------------------------------------------------------------
     # Freshness: keep postings at most this many days old

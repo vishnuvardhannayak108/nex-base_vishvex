@@ -131,7 +131,7 @@ Engineering status for the Nex-Base delivery, built to the Master Plan
 | Qualification gate | working, evidence-limited |
 | Contact discovery | working, variable yield |
 | Enrichment waterfall | ZoomInfo primary, Apollo / Apify fallback: implemented, tested with mocks/fixtures, **live validation PENDING CLIENT CREDENTIALS**; Apify: **no enrichment actor confirmed** |
-| Email verification | provider exists, **not wired** (Phase 8) |
+| Email verification | ZeroBounce wired after POC ranking, **off by default**; live validation pending |
 | Export | CSV + `/leads` API |
 | Outreach | **out of scope** — removed in Phase 1 |
 

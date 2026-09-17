@@ -8,6 +8,68 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Phase 8 — POC ranking, email verification, Final Lead, export (2026-09-17)
+
+Master Plan Phase 8: POC priority ranking (P1-P4), Quality > Quota, email
+verification step, Final Lead record with full evidence, clean export (CSV + API).
+No email sending, Instantly, sequences, bounce handling or warm-up.
+
+### API evidence
+
+ZeroBounce docs (zerobounce.net/docs, "Single Email Validator - Real time (v2)",
+"Status Codes (v2)"), read 2026-09-17: `GET/POST https://api.zerobounce.net/v2/validate`
+with `api_key`, `email`, `ip_address` (POST as form-urlencoded, accepted since
+2026-09-03); `status` in valid / invalid / catch-all / unknown / spamtrap / abuse /
+do_not_mail plus `sub_status`; failure body `{"error": "Invalid API Key or your account
+ran out of credits"}`; unknown results consume no credit. No ZeroBounce call was made.
+
+### Added / changed
+
+- `contacts/ranking.py` `rank_pocs`: final POC order after enrichment. Tier recomputed
+  from the title with the plan's P1-P4 matcher; named people only; tier, then email
+  class strength, then evidence source (public, ZoomInfo, Apollo, Apify), then public
+  rank score; `poc_rank`; capped at `CONTACTS_MAX`, never padded.
+- `email/verification.py` rewritten: `EmailVerifier` (documented call, key in POST body,
+  no retries on a paid call; timeout / 401-403 / 429 / error body / unrecognized status
+  all stay `PENDING` with a reason) and `VerificationStage` (PERSONAL / ROLE only, others
+  `SKIPPED`; `EMAIL_VERIFICATION_ENABLED` gate, default off; per-run budget; one call per
+  email per run; VALID / INVALID / RISKY reused within the refresh window; stop after
+  PROVIDER_UNAVAILABLE / RATE_LIMITED; log row per call; verdict written to the contact).
+- `core/enums.py`: `VerificationStatus.SKIPPED`.
+- `enrichment/waterfall.py`: `_source_rank` renamed `source_rank` (shared with ranking).
+- `pipeline/runner.py`: stages `poc_ranking` and `email_verification` after `enrichment`
+  (same `stop_at` gate); `QualifiedLead.lead_status`; `report.verification`,
+  `report.final_leads`; `PipelineRunner(email_verifier=...)`.
+- `export.py` rewritten: `final_lead` / `iter_final_leads` build the Final Lead from stored
+  companies, contacts, evidence, jobs, verification and enrichment logs; `lead_status`
+  (READY / PENDING_VERIFICATION / NO_VERIFIED_POC_EMAIL); CSV one row per ranked POC.
+- `GET /leads` returns Final Lead records (`lead_status` filter); `cli export --lead-status`.
+- `config.py` / `.env.example`: `EMAIL_VERIFICATION_ENABLED=false`,
+  `EMAIL_VERIFICATION_MAX_PER_RUN=50`, `EMAIL_VERIFICATION_REFRESH_DAYS=30`.
+- No schema change: verification detail lives in `email_verification_logs.raw_result`.
+- Tests: 976 passed (953 before). New `tests/test_final_leads.py` (23).
+
+### Removed / replaced
+
+| Removed | Callers / imports | Tests | Why |
+|---|---|---|---|
+| ZeroBounce `POST /validate` with `Authorization: Bearer` + JSON body | none outside the module | `test_hardening.py::test_zerobounce_key_never_travels_in_the_url` (rewritten for the documented form body; key still never in the URL) | not ZeroBounce's documented API |
+| `_STATUS_MAP` confidences (0.95 / 0.5 / 0.4 / 0.0) | written to `verification_confidence` | none | invented numbers; ZeroBounce returns none. Column kept, left null |
+| `EmailVerifier.verify_contacts`, `verify_emails`, verifier-side persistence | none | none | replaced by `VerificationStage` |
+| Old `/leads` (raw `companies` rows), `iter_lead_rows`, CSV columns `is_direct_employer`, `internal_ta_verdict`, `persistent_hiring_runs`, `source_type`, `source_priority`, `first_seen_at`, `last_seen_at`, `contact_rank_score`, `discovery_stage`, `verification_confidence`, `evidence_url` | `cli export`, `/leads` | `test_hardening.py` (route auth only, unchanged) | replaced by the Final Lead; qualification evidence stays in `qualification_reasons`, provenance per POC |
+| `test_runner_calls_no_verification_and_sends_nothing` | - | `test_discovery_coverage.py` | verification is now a plan stage; replaced by a no-sending + off-by-default check |
+| stage list in `test_every_stage_is_timed_and_reported` | - | `test_pipeline_e2e.py` | two new stages |
+
+### Not verified live
+
+ZeroBounce: implemented, tested with mocks/fixtures. A `ZEROBOUNCE_API_KEY` is set in
+the local `.env`, but paid verification is off by default and no live call was made:
+live validation needs approval to run paid verification. `GET /leads` builds each Final
+Lead with several reads per company (ponytail: fine for export volumes; a SQL view if
+pages get slow).
+
+---
+
 ## Apify enrichment infrastructure, before actor selection (2026-09-17)
 
 Tests: 919 before, **953 passed** after (0 failed); 34 new in `tests/test_apify_enrichment.py`. No Apify actor is selected or registered;

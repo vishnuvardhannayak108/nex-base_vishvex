@@ -66,6 +66,8 @@ class VerificationStatus(str, Enum):
     INVALID = "INVALID"
     RISKY = "RISKY"
     UNKNOWN = "UNKNOWN"
+    #: Not sent for verification: not the employer's own mailbox.
+    SKIPPED = "SKIPPED"
 
 
 class DiscoveryStage(str, Enum):

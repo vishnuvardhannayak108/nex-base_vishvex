@@ -3,7 +3,7 @@
 Endpoints:
   GET  /health                    liveness + schema check (public)
   POST /pipeline/run              run the pipeline for a sector + job
-  GET  /leads                     paginated leads (the export point)
+  GET  /leads                     paginated Final Leads (the export point)
   GET  /companies/{id}/emails     contacts and mailboxes with provenance
   GET  /config/sectors            sector list and suggested jobs
 
@@ -159,17 +159,21 @@ async def run_pipeline(request: RunRequest) -> dict:
 @app.get("/leads", dependencies=[Depends(rate_limit), Depends(require_api_key)])
 def leads(
     status: str = Query(default="QUALIFIED"),
+    lead_status: str | None = Query(default=None,
+                                    pattern="^(READY|PENDING_VERIFICATION|NO_VERIFIED_POC_EMAIL)$"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     repo: SupabaseRepository = Depends(get_repo),
 ) -> dict:
+    """Final Lead records (the export point): qualification, hiring evidence,
+    ranked POCs with verification and provenance. Nothing is sent."""
     if not repo.configured:
         return {"configured": False, "items": [], "count": 0}
-    filters = None if status == "ALL" else {"qualification_status": status}
-    rows = repo.select(
-        "companies", "*", filters=filters, limit=limit + offset, order_by="qualification_score"
-    )
-    page = rows[offset : offset + limit]
+    from itertools import islice
+
+    from nexbase.export import iter_final_leads
+
+    page = list(islice(iter_final_leads(repo, status, lead_status), offset, offset + limit))
     return {"configured": True, "count": len(page), "offset": offset, "items": page}
 
 

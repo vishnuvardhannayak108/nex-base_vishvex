@@ -14,9 +14,11 @@ Single entry point used by the API, the CLI and tests:
       QUALIFIED companies only
     9 Enrichment waterfall, QUALIFIED companies only: ZoomInfo PRIMARY, Apollo
       and Apify FALLBACK only when ZoomInfo could not supply what was required
+   10 POC ranking (P1..P4, Quality > Quota)
+   11 Email verification of ranked POC emails (ZeroBounce; off unless enabled)
+   12 Final lead status; export reads the stored Final Lead (``nexbase/export.py``)
 
-Apollo, Apify and email verification are not executed here. Nothing here sends
-email.
+Nothing here sends email.
 
 One :class:`AccessLayer` is shared for the whole run, so the rate limiter and
 the Camoufox budget are genuinely global rather than resetting per company.
@@ -33,7 +35,7 @@ from urllib.parse import urlsplit
 from nexbase.access.fetcher import AccessLayer
 from nexbase.config import Settings, get_settings
 from nexbase.contacts.discovery import ContactDiscovery
-from nexbase.contacts.ranking import ContactRanker
+from nexbase.contacts.ranking import ContactRanker, rank_pocs
 from nexbase.core.enums import DiscoveryStage, EmailStatus, QualificationStatus, SourcePriority
 from nexbase.core.models import RawJob
 from nexbase.db.repository import InertRepository, SupabaseRepository
@@ -41,6 +43,8 @@ from nexbase.discovery.linkedin_signal import LinkedInApplicantEnricher
 from nexbase.discovery.planner import DiscoveryPlan
 from nexbase.discovery.registry import SourceRegistry, build_registry
 from nexbase.email.discovery import EmailDiscovery
+from nexbase.email.verification import EmailVerifier, VerificationStage
+from nexbase.export import lead_status
 from nexbase.enrichment.apify import ApifyAdapter
 from nexbase.enrichment.apollo import ApolloAdapter
 from nexbase.enrichment.base import CompanyContext, FallbackProvider
@@ -132,6 +136,9 @@ class QualifiedLead:
     #: The enrichment waterfall for this lead: every provider attempt (called or
     #: not, status, fallback reason, match method, fields supplied, credits).
     enrichment: dict = field(default_factory=dict)
+    #: READY | PENDING_VERIFICATION | NO_VERIFIED_POC_EMAIL, set after
+    #: verification; None when the run stopped earlier.
+    lead_status: str | None = None
     rejection_reasons: list[str] = field(default_factory=list)
     evidence_url: str | None = None
     source_sites: list[str] = field(default_factory=list)
@@ -166,6 +173,9 @@ class PipelineReport:
     contact_discovery: dict = field(default_factory=dict)
     #: Provider -> attempt status counts, and credits spent per provider.
     enrichment: dict = field(default_factory=dict)
+    #: Email verification counts, and QUALIFIED leads per lead status.
+    verification: dict = field(default_factory=dict)
+    final_leads: dict = field(default_factory=dict)
     #: Per-source outcome, so an empty or broken source stays visible
     #: instead of being folded into a single total.
     source_status: dict = field(default_factory=dict)
@@ -200,6 +210,8 @@ class PipelineReport:
             "domain_resolution": self.domain_resolution,
             "contact_discovery": self.contact_discovery,
             "enrichment": self.enrichment,
+            "verification": self.verification,
+            "final_leads": self.final_leads,
             "source_status": self.source_status,
             "coverage": self.coverage,
             "qualified_leads": [asdict(lead) for lead in self.qualified],
@@ -229,10 +241,12 @@ class PipelineRunner:
         domain_resolver=None,
         registry: SourceRegistry | None = None,
         enrichment_providers: list[FallbackProvider] | None = None,
+        email_verifier: EmailVerifier | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         #: Priority order, primary first. Default: ZoomInfo, Apollo, Apify.
         self._enrichment_providers = enrichment_providers
+        self._email_verifier = email_verifier
         ensure_logging_configured(self.settings.log_level)
         self.log = logger or get_logger("nexbase.pipeline.runner")
         self.repo = repo if repo is not None else SupabaseRepository(settings=self.settings)
@@ -426,6 +440,14 @@ class PipelineRunner:
             if stop_at != "before_enrichment":
                 with stage(self.log, "enrichment", report.stages):
                     self._enrich(qualified, report)
+
+                # --- 10-12. POC ranking, email verification, final lead ------
+                with stage(self.log, "poc_ranking", report.stages):
+                    for _, lead, _ in qualified:
+                        lead.contacts = rank_pocs(lead.contacts, lead.domain or None,
+                                                  self.settings.contacts_max)
+                with stage(self.log, "email_verification", report.stages):
+                    self._verify(qualified, report)
 
         # --- Reporting ------------------------------------------------------
         report.access = {
@@ -1033,6 +1055,22 @@ class PipelineRunner:
         report.enrichment = {"qualified": len(qualified), "statuses": statuses,
                              "credits": credits}
         self.log.info("enrichment_complete", statuses=statuses, credits=credits)
+
+    def _verify(self, qualified, report) -> None:
+        """Verify ranked POC emails, then set each lead's final status."""
+        verification = VerificationStage(self.repo, self.settings, self._email_verifier, self.log)
+        counts: dict[str, int] = {}
+        for _, lead, company_id in qualified:
+            try:
+                verification.verify_lead(lead.contacts, lead.domain or None, company_id)
+            except Exception as exc:
+                report.append_pitfall(stage="EMAIL_VERIFICATION", company=lead.company_name,
+                                      reason=str(exc))
+            lead.lead_status = lead_status(lead.contacts, lead.domain or None)
+            counts[lead.lead_status] = counts.get(lead.lead_status, 0) + 1
+        report.verification = verification.stats
+        report.final_leads = counts
+        self.log.info("email_verification_complete", **verification.stats, lead_statuses=counts)
 
     def _reclassify_emails(self, lead, company_id, provider_emails) -> None:
         """Classify again with the enriched contacts; persist only new addresses."""

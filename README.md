@@ -32,9 +32,8 @@ USER (Sector + Job)
      ZoomInfo (primary) ............. zoominfo.py, zoominfo_stage.py
      Apollo, Apify (fallback only) .. apollo.py, apify.py
   -> POC ranking ..................... nexbase/contacts/ranking.py
-  -> Email verification .............. nexbase/email/verification.py (not wired)
-  -> Final lead + export ............. nexbase/pipeline/runner.py, nexbase/export.py,
-                                       GET /leads
+  -> Email verification .............. nexbase/email/verification.py (ZeroBounce; off by default)
+  -> Final lead + export ............. nexbase/export.py: CSV, GET /leads
 ```
 
 Shared infrastructure:
@@ -59,14 +58,29 @@ Shared infrastructure:
 | 5 | Qualification engine | **done** |
 | 6 | Free/public contact discovery | **done** |
 | 7 | Enrichment: ZoomInfo primary, Apollo / Apify fallback | implemented, tested with mocks/fixtures; **live validation pending client credentials** (see Provider status) |
-| 8 | POC ranking, email verification, final lead, export | pending |
+| 8 | POC ranking, email verification, final lead, export | **done**; ZeroBounce tested with mocks/fixtures, live validation pending (see Provider status) |
 | 9 | Observability, source health, hardening | pending |
 
 The runner currently executes: plan -> registry discovery -> normalize -> job dedup -> freshness ->
 company identification -> qualify -> resolve domains -> persist -> free / public contact
 discovery + email classification + POC ranking -> enrichment waterfall (ZoomInfo primary,
-Apollo / Apify fallback; both stages QUALIFIED companies only). Email verification is
-**not called**.
+Apollo / Apify fallback; both stages QUALIFIED companies only) -> POC ranking -> email
+verification (off unless `EMAIL_VERIFICATION_ENABLED`) -> lead status. Export and `GET /leads`
+read the stored Final Lead. Nothing sends email.
+
+**Final Lead** (`nexbase/export.py`): company, qualification (status, score, reasons, review
+flags), hiring evidence (jobs with evidence URLs), ranked POCs (P1..P4, `poc_rank`, email class,
+verification result, origin, field provenance, evidence rows), company mailboxes and the
+enrichment log. POCs are only named people with a plan POC title, ordered by tier, then email
+quality, then evidence source; never padded to a number (Quality > Quota). `lead_status`:
+`READY` (a POC's PERSONAL company-domain email verified VALID), `PENDING_VERIFICATION` (a
+PERSONAL POC email not yet verified), `NO_VERIFIED_POC_EMAIL` (otherwise).
+
+**Email verification**: ranked POC emails of class PERSONAL or ROLE only (others `SKIPPED`),
+ZeroBounce `/v2/validate` as documented (key in the POST body), at most
+`EMAIL_VERIFICATION_MAX_PER_RUN` calls, VALID / INVALID / RISKY reused for
+`EMAIL_VERIFICATION_REFRESH_DAYS`; a failed call stays `PENDING`, and an auth / credit failure
+stops calls for the run. Every call is logged to `email_verification_logs`.
 
 ## Planner and source registry
 
@@ -153,7 +167,7 @@ python -m nexbase.cli sources                         # registry: class, handler
 python -m nexbase.cli plan --sector Manufacturing --job "Warehouse Manager"
 python -m nexbase.cli run --sector Manufacturing --job "Warehouse Manager" --dry-run
 python -m nexbase.cli run ... --stop-at before_contacts   # skip contact discovery
-python -m nexbase.cli export leads.csv --status QUALIFIED
+python -m nexbase.cli export leads.csv --status QUALIFIED [--lead-status READY]
 ```
 
 ## API
@@ -166,7 +180,7 @@ uvicorn nexbase.api.main:app --reload
 |---|---|
 | `GET /health` | public |
 | `POST /pipeline/run` `{"sector", "job"}` | `X-API-Key` |
-| `GET /leads` | `X-API-Key` |
+| `GET /leads?status=&lead_status=` (Final Leads) | `X-API-Key` |
 | `GET /companies/{id}/emails` | `X-API-Key` |
 | `GET /config/sectors` | `X-API-Key` |
 
@@ -317,6 +331,7 @@ each supplied field and company match is an evidence row.
 |---|---|---|---|---|
 | ZoomInfo | PRIMARY | yes | yes | **PENDING CLIENT CREDENTIALS** |
 | Apollo | FALLBACK | yes | yes | **PENDING CLIENT CREDENTIALS** |
+| ZeroBounce | EMAIL VERIFICATION | yes (off by default: `EMAIL_VERIFICATION_ENABLED=false`) | yes | **PENDING**: a key is configured locally, but no live call was made; needs approval to run paid verification |
 | Apify | LAST FALLBACK | per-job framework (`company_to_pocs`, `profile_to_email`; `website_to_emails` deferred), LinkedIn company ↔ domain identity check, benchmark harness; **no actor selected or registered** | framework, identity check and benchmark metrics, with test-only fake actors | **PENDING CLIENT CREDENTIALS and actor confirmation** (benchmark not run) |
 
 No provider is LIVE VALIDATED. Credentials are never invented, borrowed or worked

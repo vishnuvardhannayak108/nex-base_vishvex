@@ -173,11 +173,12 @@ def test_pipeline_order_is_unchanged():
     assert positions == sorted(positions), "pipeline stages are out of order"
 
 
-def test_runner_calls_no_verification_and_sends_nothing():
-    """Enrichment is wired; email verification and outreach stay out."""
+def test_runner_sends_nothing_and_paid_verification_is_off_by_default():
+    """Phase 8 wires verification; it stays off by default and nothing sends email."""
     src = Path("nexbase/pipeline/runner.py").read_text(encoding="utf-8")
-    for name in ("EmailVerifier", "ZeroBounce", "outreach"):
-        assert name not in src, name
+    for name in ("outreach", "send_email", "instantly", "smtplib"):
+        assert name not in src.lower(), name
+    assert Settings(_env_file=None).email_verification_enabled is False
 
 
 def test_domain_cache_ttls_are_untouched():

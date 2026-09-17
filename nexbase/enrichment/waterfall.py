@@ -87,7 +87,7 @@ def _origins(contact: dict) -> list[str]:
     return [o for o in (contact.get("origin") or PUBLIC).split("+") if o]
 
 
-def _source_rank(contact: dict) -> int:
+def source_rank(contact: dict) -> int:
     first = _origins(contact)[0]
     return SOURCE_ORDER.index(first) if first in SOURCE_ORDER else len(SOURCE_ORDER)
 
@@ -307,7 +307,7 @@ class EnrichmentWaterfall:
         contacts.sort(key=lambda c: (
             c.get("title_priority") or 9,
             -email_strength(c.get("email"), domain),
-            _source_rank(c),
+            source_rank(c),
             -(c.get("rank_score") or 0),
         ))
         lead.contacts = contacts[: self.settings.contacts_max]

@@ -126,7 +126,8 @@ def cmd_run(args) -> int:
 def cmd_export(args) -> int:
     from nexbase.export import export_leads_csv
 
-    count = export_leads_csv(args.path, repo=_repo(), status=args.status)
+    count = export_leads_csv(args.path, repo=_repo(), status=args.status,
+                             lead_status_filter=args.lead_status)
     print(f"wrote {count} rows to {args.path}")
     return 0
 
@@ -172,9 +173,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("-v", "--verbose", action="store_true")
     run_p.set_defaults(func=cmd_run)
 
-    exp = sub.add_parser("export", help="export leads to CSV")
+    exp = sub.add_parser("export", help="export final leads to CSV (no sending)")
     exp.add_argument("path")
     exp.add_argument("--status", default="QUALIFIED")
+    exp.add_argument("--lead-status", default=None,
+                     choices=["READY", "PENDING_VERIFICATION", "NO_VERIFIED_POC_EMAIL"])
     exp.set_defaults(func=cmd_export)
 
     return parser

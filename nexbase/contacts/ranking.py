@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from nexbase.config import Settings, get_settings
 from nexbase.contacts.extraction import infer_priority
 from nexbase.contacts.models import ContactCandidate
+from nexbase.enrichment.waterfall import email_strength, source_rank
 from nexbase.logging_setup import get_logger
 
 _STAGE_ORDER = {"SAME_SOURCE": 0, "OTHER_SOURCE": 1, "PUBLIC_WEB": 2, "ENRICHMENT": 3}
@@ -86,6 +87,30 @@ def select_contacts(
         deduped.append(c)
 
     return deduped[:cap]
+
+
+def rank_pocs(contacts: list[dict], domain: str | None, limit: int | None = None) -> list[dict]:
+    """Final POC ranking for a lead, after enrichment and before email verification.
+
+    Quality > Quota: only named people whose title maps to a POC tier (P1 Owner /
+    CEO / President / Managing Partner, P2 COO / VP Operations / Director of
+    Operations / GM, P3 HR / Talent, P4 Plant / Operations Manager) are kept; the
+    list is never padded. Order: tier, then email quality (PERSONAL > ROLE >
+    DOMAIN_MISMATCH > EXTERNAL_UNVERIFIED > PORTAL_GENERATED > none), then the
+    earlier evidence source, then the public rank score. Sets ``poc_rank``.
+    """
+    pocs = []
+    for contact in contacts:
+        priority = infer_priority(contact.get("title"))
+        if not (contact.get("name") or "").strip() or priority is None:
+            continue
+        pocs.append({**contact, "title_priority": priority})
+    pocs.sort(key=lambda c: (c["title_priority"], -email_strength(c.get("email"), domain),
+                             source_rank(c), -(c.get("rank_score") or 0)))
+    pocs = pocs[:limit] if limit is not None else pocs
+    for rank, contact in enumerate(pocs, 1):
+        contact["poc_rank"] = rank
+    return pocs
 
 
 class ContactRanker:

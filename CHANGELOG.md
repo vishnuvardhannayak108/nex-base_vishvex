@@ -8,6 +8,46 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Apify enrichment infrastructure, before actor selection (2026-09-17)
+
+Tests: 919 before, **953 passed** after (0 failed); 34 new in `tests/test_apify_enrichment.py`. No Apify actor is selected or registered;
+the benchmark has not been run; live Apify validation remains **PENDING CLIENT
+CREDENTIALS**.
+
+### Added / changed
+
+- Per-job Apify actors (`enrichment/apify.py`): `company_to_pocs`,
+  `profile_to_email`, `website_to_emails`, each with primary and backup settings,
+  all empty by default. The job follows the waterfall's request; the backup runs
+  only when the primary is not registered for that job, fails, or attaches
+  nothing, and never after a rate limit or refused credentials.
+  `website_to_emails` is configurable but never run (deferred: Phase 6 covers
+  public employer-site emails).
+- `linkedin_company_identity`: groups results by LinkedIn company; confirmed only
+  when its published website's registrable domain equals the employer's (scheme,
+  "www.", path, case and subdomains normalized; platform URLs are not websites).
+  Exactly one confirmed company attaches; several, or one whose results disagree,
+  are AMBIGUOUS; missing website -> LINKEDIN_WEBSITE_MISSING; no company named ->
+  NO_COMPANY; a name alone never matches. `profile_to_email` results attach only for
+  a person asked about, whose LinkedIn company website is on the employer's domain.
+- Actor contract: `ApifyItem` (contact, company LinkedIn URL, company website,
+  profile URL); `ApifyEnrichmentActor.job` and `scrapes_linkedin` (risk
+  `LINKEDIN_SCRAPING_REQUIRES_CLIENT_APPROVAL`, recorded on every call).
+- Benchmark: `nexbase/enrichment/apify_benchmark.py` (POC coverage, correct-company
+  rate, P1-P4 title match, email classes, duplicate rate, runtime, provider errors,
+  cost cap and actual usage when reported, identity statuses, risks);
+  `scripts/benchmark_apify_actors.py` (refuses without `APIFY_API_TOKEN`, actor
+  definitions, and `--confirm-paid-runs`); `benchmarks/apify/` README,
+  `companies.example.json`, `actors_template.py` (no actors). Local actor
+  definitions, company sets and reports are git-ignored.
+
+### Removed / replaced
+
+| Removed | Callers / imports (verified) | Tests | Why |
+|---|---|---|---|
+| Setting `apify_enrichment_actor` / `APIFY_ENRICHMENT_ACTOR` | `ApifyAdapter.actor` | `test_enrichment_waterfall.py` (3 Apify tests; 1 kept and updated, 2 moved to `test_apify_enrichment.py`) | Replaced by per-job primary/backup settings |
+| `parse_item -> (contact, employer_domain)` contract | `ApifyAdapter.find` | same | An employer domain alone could not express the LinkedIn company identity check; replaced by `ApifyItem` |
+
 ## Fallback enrichment architecture (2026-09-17)
 
 Tests: 887 before, **919 passed** after (0 failed); 32 new in

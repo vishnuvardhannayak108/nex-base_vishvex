@@ -14,7 +14,7 @@ import httpx
 import pytest
 import tenacity
 
-from nexbase.enrichment.apify import ApifyAdapter, ApifyEnrichmentActor
+from nexbase.enrichment.apify import ApifyAdapter
 from nexbase.enrichment.apollo import ApolloAdapter, ApolloProvider
 from nexbase.enrichment.base import (
     PROVIDER_ERROR,
@@ -408,57 +408,14 @@ def test_apollo_person_lookups_are_capped_per_company(ap_settings):
 
 
 # ===========================================================================
-# Apify adapter: no confirmed actor, so unavailable unless one is registered
+# Apify adapter: no confirmed actor, so unavailable (details: test_apify_enrichment.py)
 # ===========================================================================
 def test_apify_without_a_confirmed_actor_is_unavailable(settings):
     settings.apify_api_token = "token"
-    settings.apify_enrichment_actor = "someone~contact-finder"
+    settings.apify_company_to_pocs_actor = "someone~contact-finder"   # configured, not registered
     outcome = ApifyAdapter(settings).find(_company(), _need(full=True), [])
     assert (outcome.status, outcome.reason, outcome.calls) == (
-        PROVIDER_UNAVAILABLE, "NO_CONFIRMED_ACTOR", [])
-
-
-def _fake_actor():
-    return ApifyEnrichmentActor(
-        actor_id="test~actor",
-        build_input=lambda company, need: {"domain": company.domain},
-        parse_item=lambda item: (ProviderContact(
-            name=item["name"], title=item["title"], email=item["email"],
-            extraction_method="apify_test_actor", evidence_url=item["url"]), item["company_domain"]))
-
-
-def test_apify_keeps_only_people_it_ties_to_this_employer_and_records_the_cap(settings):
-    settings.apify_api_token = "token"
-    settings.apify_enrichment_actor = "test~actor"
-    seen = {}
-
-    def run(actor_id, actor_input, **kw):
-        seen.update(actor_id=actor_id, input=actor_input, **kw)
-        return [{"name": "Jane Doe", "title": "CEO", "email": "jane.doe@acme-mfg.com",
-                 "url": "https://acme-mfg.com/team", "company_domain": "www.acme-mfg.com"},
-                {"name": "Omar Haddad", "title": "CEO", "email": "omar@other.com",
-                 "url": "https://other.com/team", "company_domain": "other.com"}]
-
-    adapter = ApifyAdapter(settings, actors={"test~actor": _fake_actor()}, run=run)
-    outcome = adapter.find(_company(), _need(full=True, limit=10), [])
-    assert [c.name for c in outcome.contacts] == ["Jane Doe"]
-    assert seen["input"] == {"domain": DOMAIN} and seen["max_items"] == 10
-    [call] = outcome.calls
-    assert call.payload["max_total_charge_usd"] == settings.apify_max_charge_usd_per_call
-    assert call.credit_cost == settings.apify_max_charge_usd_per_call and call.billable
-
-
-def test_apify_run_failures_are_classified(settings):
-    settings.apify_api_token = "token"
-    settings.apify_enrichment_actor = "test~actor"
-    request = httpx.Request("POST", "https://api.apify.com/v2/acts/test~actor")
-
-    def run(*a, **kw):
-        raise httpx.HTTPStatusError("rate", request=request, response=httpx.Response(429, request=request))
-
-    outcome = ApifyAdapter(settings, actors={"test~actor": _fake_actor()}, run=run).find(
-        _company(), _need(full=True), [])
-    assert outcome.status == PROVIDER_RATE_LIMITED and outcome.calls[0].credit_cost == 0.0
+        PROVIDER_UNAVAILABLE, "NO_CONFIRMED_ACTOR:company_to_pocs", [])
 
 
 # ===========================================================================

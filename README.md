@@ -317,7 +317,7 @@ each supplied field and company match is an evidence row.
 |---|---|---|---|---|
 | ZoomInfo | PRIMARY | yes | yes | **PENDING CLIENT CREDENTIALS** |
 | Apollo | FALLBACK | yes | yes | **PENDING CLIENT CREDENTIALS** |
-| Apify | LAST FALLBACK | framework only, **no enrichment actor confirmed** | framework, with a test-only actor | **PENDING CLIENT CREDENTIALS and actor confirmation** |
+| Apify | LAST FALLBACK | per-job framework (`company_to_pocs`, `profile_to_email`; `website_to_emails` deferred), LinkedIn company ↔ domain identity check, benchmark harness; **no actor selected or registered** | framework, identity check and benchmark metrics, with test-only fake actors | **PENDING CLIENT CREDENTIALS and actor confirmation** (benchmark not run) |
 
 No provider is LIVE VALIDATED. Credentials are never invented, borrowed or worked
 around, and provider order does not change while they are missing. When the client
@@ -333,10 +333,20 @@ with explicit confirmation, and its real input/output schema is validated first.
   `username:password` or a pre-issued JWT.
 - Apollo (`GET /organizations/enrich`, `POST /mixed_people/api_search`,
   `POST /people/match`), `x-api-key`.
-- Apify: runs a registered contact-enrichment actor through the Apify run API.
-  **No actor is registered** until one is chosen and its schema reviewed, so Apify
-  reports `PROVIDER_UNAVAILABLE: NO_CONFIRMED_ACTOR`. Its recorded cost is the
-  per-run USD cap.
+- Apify: per enrichment job, a primary and an optional backup actor
+  (`APIFY_COMPANY_TO_POCS_ACTOR`, `APIFY_PROFILE_TO_EMAIL_ACTOR`,
+  `APIFY_WEBSITE_TO_EMAILS_ACTOR`, each with `_BACKUP_ACTOR`). "Find POCs" runs
+  `company_to_pocs`; "fill these people's emails" runs `profile_to_email` for people
+  with a LinkedIn profile URL; `website_to_emails` is deferred (Phase 6 already
+  crawls employer sites). Employees attach only when exactly one LinkedIn company
+  in the results publishes a website on the employer's domain; a missing website,
+  another domain, or two such companies attach nothing, and a name never matches.
+  **No actor is selected or registered**, so Apify reports
+  `PROVIDER_UNAVAILABLE: NO_CONFIRMED_ACTOR:<job>`. Actors that scrape LinkedIn
+  carry the risk `LINKEDIN_SCRAPING_REQUIRES_CLIENT_APPROVAL`: production use needs
+  client/business approval. Candidates are compared with the benchmark in
+  `benchmarks/apify/` (not run: pending client credentials). Its recorded cost is
+  the per-run USD cap.
 
 `--stop-at before_enrichment` runs public discovery only.
 

@@ -167,9 +167,17 @@ class Settings(BaseSettings):
     apify_max_items_per_query: int = 100
     apify_max_charge_usd_per_call: float = 1.0
     apify_timeout_seconds: int = 300
-    #: Apify contact enrichment is the LAST fallback. The actor id must be one
-    #: registered in enrichment/apify.py after its schema is reviewed; none is yet.
-    apify_enrichment_actor: str = ""
+    #: Apify contact enrichment is the LAST fallback, configured per job with a
+    #: primary and an optional backup actor. An id is used only if that actor is
+    #: registered in enrichment/apify.py for the same job; none is registered,
+    #: and no actor has been selected (live validation pending client credentials).
+    apify_company_to_pocs_actor: str = ""
+    apify_company_to_pocs_backup_actor: str = ""
+    apify_profile_to_email_actor: str = ""
+    apify_profile_to_email_backup_actor: str = ""
+    #: Deferred: Phase 6 already discovers public employer-site emails. Never run.
+    apify_website_to_emails_actor: str = ""
+    apify_website_to_emails_backup_actor: str = ""
     apify_enrichment_max_companies_per_run: int = 5
     apify_enrichment_max_items: int = 10
 

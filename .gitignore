@@ -13,3 +13,8 @@ build/
 playwright/
 .gstack/
 .coverage
+
+# Apify actor benchmark inputs/outputs (actor definitions and real company sets stay local)
+benchmarks/apify/actors.py
+benchmarks/apify/companies.json
+reports/apify_actor_benchmark.json

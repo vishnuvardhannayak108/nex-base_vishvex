@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Example Construction Co",
+    "domain": "example-construction.example",
+    "state": "OH",
+    "known_people": []
+  },
+  {
+    "name": "Example Manufacturing Inc",
+    "domain": "example-manufacturing.example",
+    "state": "TX",
+    "known_people": [
+      {
+        "name": "Example Person",
+        "title": "Operations Manager",
+        "profile_url": "https://www.linkedin.com/in/example-person"
+      }
+    ]
+  }
+]

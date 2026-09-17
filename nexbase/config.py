@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     #: Queries one source may run per pipeline run, state fan-out included.
     #: Hitting it is reported as BUDGET_REACHED.
     source_max_calls_per_run: int = 60
+    #: Sources run at the same time. Each source still runs its own queries in
+    #: order under its own interval; 1 is fully sequential.
+    source_max_workers: int = 1
 
     #: Apify sources run only with a token. Each call is paid per result, so
     #: an Apify source gets its own, much smaller call budget and hard caps on

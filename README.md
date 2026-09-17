@@ -110,7 +110,8 @@ source (`schema_rejected`, `schema_problems`).
 
 Every source has: enabled/disabled state (`SOURCES_DISABLED`), a minimum
 interval between calls (`SOURCE_MIN_INTERVAL_SECONDS`, DIRECT/APIFY), a per-run
-call budget (`SOURCE_MAX_CALLS_PER_RUN`), error tracking and metrics (reported
+call budget (`SOURCE_MAX_CALLS_PER_RUN`), optional concurrency across sources
+(`SOURCE_MAX_WORKERS`, default 1; a source's own queries never overlap), error tracking and metrics (reported
 in `source_status` and `coverage`), and provenance stamped on every job (run,
 source, class, handler, portal, title, geography, fetched_at), persisted in
 `jobs.provenance` and `discovery_runs`.

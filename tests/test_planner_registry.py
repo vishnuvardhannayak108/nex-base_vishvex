@@ -414,3 +414,87 @@ def test_the_api_run_request_is_sector_and_job_only():
         RunRequest(sector="Nope", job="Welder")
     with pytest.raises(ValidationError):
         RunRequest(sector="Manufacturing", job="")
+
+
+# ===========================================================================
+# Concurrent sources (load test 2026-09-17)
+# ===========================================================================
+def _three_sources(delay=0.0):
+    import time as _time
+
+    def portal_adapter(site):
+        def adapter(query):
+            _time.sleep(delay)
+            return ([_job(f"{site}-{query.title.title}", site)],
+                    SourceOutcome(source="fake", stop_reason=SOURCE_EXHAUSTED, jobs_returned=1))
+        return adapter
+
+    return [_source("indeed", portal_adapter("indeed")),
+            _source("simplyhired", portal_adapter("simplyhired")),
+            _source("lever", portal_adapter("lever"), SourceClass.ATS)]
+
+
+def test_concurrent_sources_return_what_a_sequential_run_does_in_the_same_order(settings):
+    plan = _plan(settings)
+    runs = []
+    for workers in (1, 3):
+        registry = SourceRegistry(max_workers=workers)
+        for source in _three_sources(delay=0.01):
+            registry.register(source)
+        result = registry.run(plan)
+        runs.append(([(j.provenance["source_id"], j.external_id) for j in result.jobs],
+                     [(o.source, o.query) for o in result.coverage.outcomes],
+                     {k: (v["calls"], v["jobs_accepted"]) for k, v in result.source_status.items()}))
+    assert runs[0] == runs[1]
+    jobs = runs[1][0]
+    assert all(source.split(":")[1] == key.split("-")[0] for source, key in jobs), "no mixing"
+
+
+def test_sources_really_run_concurrently(settings):
+    import time as _time
+
+    settings.planner_max_title_variants = 1
+    registry = SourceRegistry(max_workers=3)
+    for source in _three_sources(delay=0.4):
+        registry.register(source)
+    started = _time.monotonic()
+    registry.run(_plan(settings))
+    assert _time.monotonic() - started < 1.0, "three 0.4 s sources did not overlap"
+
+
+def test_a_crashed_source_worker_is_isolated_under_concurrency(settings, monkeypatch):
+    registry = SourceRegistry(max_workers=3)
+    for source in _three_sources():
+        registry.register(source)
+    original = registry._run_source
+
+    def crash_indeed(source, *args):
+        if source.portal == "indeed":
+            raise MemoryError("worker died")
+        return original(source, *args)
+
+    monkeypatch.setattr(registry, "_run_source", crash_indeed)
+    result = registry.run(_plan(settings))
+    assert result.source_status["direct:indeed"]["outcome"] == "ERROR"
+    assert result.source_status["direct:indeed"]["last_error"] == "MemoryError: worker died"
+    assert {j.source_site for j in result.jobs} == {"simplyhired", "lever"}
+
+
+def test_build_registry_takes_its_worker_count_from_settings(settings):
+    from nexbase.discovery.registry import build_registry
+
+    settings.source_max_workers = 4
+    assert build_registry(settings).max_workers == 4
+
+
+def test_jobspy_log_capture_hears_only_its_own_site():
+    """Concurrent Indeed and LinkedIn: LinkedIn's 429 must not be filed under Indeed."""
+    import logging
+
+    from nexbase.discovery.jobspy_discovery import _JobSpyLogCapture
+
+    with _JobSpyLogCapture("indeed") as indeed, _JobSpyLogCapture("linkedin") as linkedin:
+        logging.getLogger("JobSpy:LinkedIn").error("429 Response - Blocked by LinkedIn")
+        logging.getLogger("JobSpy:Indeed").warning("responded with status code: 403")
+    assert linkedin.messages == ["429 Response - Blocked by LinkedIn"]
+    assert indeed.messages == ["responded with status code: 403"]

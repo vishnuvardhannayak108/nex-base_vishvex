@@ -125,16 +125,42 @@ class ATSSliceStore:
 
     def load(self, name: str, manifest, now: datetime | None = None):
         import pandas as pd
+        import pyarrow as pa
+        import pyarrow.compute as pc
         import pyarrow.parquet as pq
 
         path = self.fetch(name, manifest)
-        present = set(pq.read_schema(path).names)
-        filters = [("country_iso", "=", "US")] if "country_iso" in present else None
-        if filters is None:
+        parquet = pq.ParquetFile(path)
+        present = set(parquet.schema_arrow.names)
+        if "country_iso" not in present:
             self.log.warning("ats_slice_has_no_country", ats=name)
-        frame = pq.read_table(
-            path, columns=[c for c in SLICE_COLUMNS if c in present], filters=filters,
-        ).to_pandas()
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=self.max_age_days)
+        coarse = (cutoff - timedelta(days=1)).strftime("%Y-%m-%d")
+        columns = [c for c in SLICE_COLUMNS if c in present]
+        # One row group at a time, filtered before the next is decoded: a slice's
+        # row group is up to ~82k rows with descriptions, and reading the whole
+        # file before filtering peaked at +2.4 GB RSS for a 221 MB SmartRecruiters
+        # frame (load test 2026-09-17). ISO timestamps compare by date prefix; a day
+        # of slack covers UTC offsets, and a value not shaped like an ISO date is
+        # left for the exact check below rather than dropped.
+        kept = []
+        for index in range(parquet.num_row_groups):
+            table = parquet.read_row_group(index, columns=columns)
+            mask = None
+            if "country_iso" in present:
+                mask = pc.fill_null(pc.equal(table["country_iso"], "US"), False)
+            if "posted_at" in present:
+                posted = table["posted_at"]
+                window = pc.fill_null(pc.or_(
+                    pc.greater_equal(posted, coarse),
+                    pc.invert(pc.match_substring_regex(posted, r"^\d{4}-\d{2}-\d{2}"))),
+                    True)
+                mask = window if mask is None else pc.and_(mask, window)
+            kept.append(table if mask is None else table.filter(mask))
+            del table
+        frame = (pa.concat_tables(kept) if kept
+                 else pa.table({c: pa.array([], pa.string()) for c in columns})).to_pandas()
+        del kept
         us_rows = len(frame)
         if "posted_at" in frame:
             # ISO8601, not an inferred format: slices mix "...:19+00:00" and
@@ -143,9 +169,8 @@ class ATSSliceStore:
             # up to 1,011 days old.
             posted = pd.to_datetime(frame["posted_at"], utc=True, errors="coerce",
                                     format="ISO8601")
-            cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=self.max_age_days)
             frame = frame[posted.isna() | (posted >= cutoff)].reset_index(drop=True)
-        self.log.info("ats_slice_read", ats=name, us_rows=us_rows, fresh_or_undated=len(frame))
+        self.log.info("ats_slice_read", ats=name, window_rows=us_rows, fresh_or_undated=len(frame))
         return frame
 
 
@@ -167,6 +192,10 @@ class ATSSliceCache:
         self._frames: dict[str, object] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        #: One slice decodes at a time. A load briefly needs 0.4-1.2 GB; ten sources
+        #: loading together peaked at 4.3 GB RSS (load test 2026-09-17, 8 workers).
+        #: Searches of loaded slices stay concurrent.
+        self._load_gate = threading.Lock()
         self.downloads = 0
         self.hits = 0
         self.log = logger or get_logger("nexbase.discovery.ats.cache")
@@ -188,7 +217,8 @@ class ATSSliceCache:
             if frame is not None:
                 self.hits += 1
                 return frame
-            frame = loader()
+            with self._load_gate:
+                frame = loader()
             if frame is None:
                 # Nothing usable came back. Caching that would turn one bad
                 # download into a run-long outage for the slice.
@@ -299,10 +329,13 @@ class ATSDiscovery:
     source: SourceInfo = ATS
 
     def __init__(self, settings: Settings | None = None, logger=None,
-                 slice_cache: "ATSSliceCache | None" = None) -> None:
+                 slice_cache: "ATSSliceCache | None" = None, client_factory=None) -> None:
         self.settings = settings or get_settings()
         self.log = logger or get_logger("nexbase.discovery.ats")
         self._client = None
+        #: Supplies a client shared by a whole run; without one, this instance
+        #: builds its own (and re-fetches the manifest and companies directory).
+        self._client_factory = client_factory
         # The runner hands every probe in a run the same cache, so a slice is
         # downloaded once per run rather than once per probe. A standalone
         # instance gets its own, which still collapses repeats within one call.
@@ -313,7 +346,8 @@ class ATSDiscovery:
     # ------------------------------------------------------------------
     def _get_client(self):
         if self._client is None:
-            self._client = build_cached_client(self.slice_cache, self.slice_store)
+            self._client = (self._client_factory() if self._client_factory is not None
+                            else build_cached_client(self.slice_cache, self.slice_store))
         return self._client
 
     # ------------------------------------------------------------------

@@ -196,7 +196,7 @@ def test_board_adapters_receive_the_plans_freshness_window(settings, monkeypatch
     class FakeBoard:
         date_window_hours = staticmethod(lambda hours_old: None)
 
-        def __init__(self, access=None, logger=None):
+        def __init__(self, access=None, logger=None, seen_keys=None):
             pass
 
         def search(self, **kwargs):
@@ -273,6 +273,29 @@ def test_mixed_iso_timestamp_formats_are_all_parsed_before_the_window(tmp_path):
     pd.DataFrame(rows).to_parquet(tmp_path / f"greenhouse-{'a' * 16}.parquet")
     frame = ATSSliceStore(tmp_path, 14).load("greenhouse", _manifest(len(rows)), now=now)
     assert sorted(frame["company"]) == ["Fresh", "FreshNoTz"]
+
+
+def test_the_parquet_read_keeps_undated_and_non_iso_dates_for_the_exact_check(tmp_path):
+    """The coarse in-read window must never drop a row it cannot compare."""
+    import pandas as pd
+
+    from nexbase.discovery.ats_discovery import ATSSliceStore
+
+    now = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    base = {"title": "Warehouse Manager", "ats_type": "greenhouse", "location": "OH",
+            "country_iso": "US", "url": "https://x", "raw": "{}"}
+    rows = [
+        {**base, "global_id": "1", "company": "Stale", "posted_at": "2026-08-01T00:00:00+00:00"},
+        {**base, "global_id": "2", "company": "Undated", "posted_at": None},
+        {**base, "global_id": "3", "company": "OffsetEdge", "posted_at": "2026-09-01T22:00:00-04:00"},
+        {**base, "global_id": "4", "company": "NonIso", "posted_at": "09/15/2026"},
+        {**base, "global_id": "5", "company": "Abroad", "country_iso": "DE",
+         "posted_at": "2026-09-15T00:00:00"},
+    ]
+    pd.DataFrame(rows).to_parquet(tmp_path / f"greenhouse-{'a' * 16}.parquet")
+    frame = ATSSliceStore(tmp_path, 14).load("greenhouse", _manifest(len(rows)), now=now)
+    # 2026-09-01T22:00-04:00 is 2026-09-02T02:00Z: inside the 14-day window.
+    assert sorted(frame["company"]) == ["NonIso", "OffsetEdge", "Undated"]
 
 
 class _Stream:
@@ -445,3 +468,35 @@ def test_the_apify_adapter_reports_a_full_page_as_capped(settings, monkeypatch):
     assert [j.source_site for j in jobs] == ["zip_recruiter", "zip_recruiter"]
     assert all(j.search_industry == "Manufacturing" for j in jobs)
     assert outcome.stop_reason == BUDGET_REACHED
+
+
+def test_every_ats_query_in_a_run_shares_one_client(settings, monkeypatch):
+    """A client per query re-fetched the manifest and companies directory each time."""
+    import pandas as pd
+
+    import nexbase.discovery.registry as reg
+    from nexbase.discovery.planner import NATIONWIDE, TitleVariant
+
+    built = []
+
+    class FakeClient:
+        manifest = None
+
+        def companies(self):
+            return pd.DataFrame()
+
+        def search(self, **kwargs):
+            return pd.DataFrame()
+
+    def fake_build(cache, store=None):
+        built.append(cache)
+        return FakeClient()
+
+    monkeypatch.setattr(reg, "build_cached_client", fake_build)
+    registry = reg.build_registry(settings)
+    for portal in ("greenhouse", "lever", "greenhouse"):
+        for title in ("Warehouse Manager", "Warehouse Supervisor"):
+            jobs, outcome = registry.get(portal).adapter(
+                reg.SourceQuery(TitleVariant(title, "INPUT"), NATIONWIDE, "", 336))
+            assert jobs == [] and outcome.stop_reason == "SOURCE_EXHAUSTED"
+    assert len(built) == 1

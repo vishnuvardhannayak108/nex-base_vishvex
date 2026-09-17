@@ -18,3 +18,6 @@ playwright/
 benchmarks/apify/actors.py
 benchmarks/apify/companies.json
 reports/apify_actor_benchmark.json
+# Load-test console logs (the JSON reports are kept)
+reports/load_test/*.out
+reports/load_test/*.log

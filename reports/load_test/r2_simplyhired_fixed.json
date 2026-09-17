@@ -1,0 +1,97 @@
+{
+  "label": "r2_simplyhired_fixed",
+  "generated_at": "2026-09-17T12:25:41.752544+00:00",
+  "load": {
+    "sector": "Manufacturing",
+    "job": "Warehouse Manager",
+    "variants": 5,
+    "calls": 8,
+    "workers": 1,
+    "jobspy_results": 50,
+    "pages": null,
+    "results": null,
+    "sources": "simplyhired"
+  },
+  "plan": {
+    "titles": [
+      "Warehouse Manager",
+      "Warehouse Foreman",
+      "Warehouse Supervisor"
+    ],
+    "hours_old": 336,
+    "geo_partitions": 51
+  },
+  "runtime_seconds": 312.5,
+  "crashed": null,
+  "resources": {
+    "rss_mb_before": 109,
+    "rss_mb_peak": 176,
+    "rss_mb_after": 169,
+    "peak_threads": 32,
+    "peak_inet_connections": 2,
+    "lingering_threads": []
+  },
+  "access": {
+    "pages_fetched": 152,
+    "pages_blocked": 0,
+    "rate_limited": 0,
+    "robots_blocked": 0,
+    "camoufox_fallbacks": 0
+  },
+  "sources": {
+    "direct:simplyhired": {
+      "queries": 8,
+      "http_requests": 153,
+      "jobs_returned": 1450,
+      "jobs_accepted": 854,
+      "schema_rejected": 0,
+      "fresh": 854,
+      "screened": 0,
+      "unique_companies": 638,
+      "runtime_seconds": 312.5,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 8
+      },
+      "stop_reasons": {
+        "BUDGET_REACHED": 2,
+        "SOURCE_EXHAUSTED": 6
+      },
+      "http_status": {
+        "200": 153
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 97,
+      "fanouts": 2,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    }
+  },
+  "integrity": {
+    "duplicate_slices": {},
+    "duplicate_rawjobs": {},
+    "mixed_sources": {},
+    "metric_mismatch": {},
+    "duplicate_requests": {}
+  },
+  "ats_dataset_requests": {
+    "total": 0,
+    "by_url": {},
+    "unattributed_hosts": {}
+  },
+  "totals": {
+    "jobs": 854,
+    "requests": 153,
+    "requests_by_thread": {
+      "MainThread": 153
+    }
+  }
+}

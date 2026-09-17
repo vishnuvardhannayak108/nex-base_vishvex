@@ -20,8 +20,11 @@ title by title, until the call budget is spent. A failing query never fans out.
 """
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -32,7 +35,12 @@ from nexbase.config import Settings, get_settings
 from nexbase.core.errors import DiscoveryError
 from nexbase.core.models import RawJob, raw_job_problems
 from nexbase.discovery.apify_sources import APIFY_ACTORS, run_actor
-from nexbase.discovery.ats_discovery import ATSDiscovery, ATSSliceCache
+from nexbase.discovery.ats_discovery import (
+    ATSDiscovery,
+    ATSSliceCache,
+    ATSSliceStore,
+    build_cached_client,
+)
 from nexbase.discovery.board_scrapers import BOARD_SCRAPERS
 from nexbase.discovery.coverage import (
     BLOCKED,
@@ -147,9 +155,11 @@ class DiscoveryResult:
 
 
 class SourceRegistry:
-    def __init__(self, logger=None) -> None:
+    def __init__(self, logger=None, max_workers: int = 1) -> None:
         self.log = logger or get_logger("nexbase.discovery.registry")
         self._by_portal: dict[str, Source] = {}
+        #: Sources run concurrently; never two queries of one source at once.
+        self.max_workers = max(1, int(max_workers or 1))
 
     def register(self, source: Source) -> Source:
         existing = self._by_portal.get(source.portal)
@@ -171,11 +181,37 @@ class SourceRegistry:
         """Execute ``plan`` against every enabled source. One failure never
         stops the others."""
         result = DiscoveryResult(jobs=[], coverage=CoverageReport(), source_status={})
+        enabled = [s for s in self.sources() if s.enabled]
+
+        def run_one(source):
+            # Each source writes only to its own buffers; they are merged below in
+            # registration order, so concurrent sources cannot interleave results.
+            own = DiscoveryResult(jobs=[], coverage=CoverageReport(), source_status={})
+            try:
+                stats = self._run_source(source, plan, repo, own)
+            except Exception as exc:  # isolation: a crashed source is that source's error
+                stats = SourceStats(errors=1, last_error=f"{type(exc).__name__}: {exc}")
+                own.coverage.add(SourceOutcome(source=source.id, stop_reason=ERROR,
+                                               error_type=type(exc).__name__,
+                                               error_message=str(exc)))
+                self.log.error("source_crashed", source=source.id, error=str(exc))
+            return own, stats
+
+        if self.max_workers > 1 and len(enabled) > 1:
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(enabled)),
+                                    thread_name_prefix="source") as pool:
+                finished = list(pool.map(run_one, enabled))
+        else:
+            finished = [run_one(source) for source in enabled]
+        by_id = {source.id: done for source, done in zip(enabled, finished)}
+
         for source in self.sources():
             if not source.enabled:
                 result.source_status[source.id] = {**source.describe(), "outcome": "DISABLED"}
                 continue
-            stats = self._run_source(source, plan, repo, result)
+            own, stats = by_id[source.id]
+            result.jobs.extend(own.jobs)
+            result.coverage.outcomes.extend(own.coverage.outcomes)
             result.source_status[source.id] = {
                 **source.describe(), **asdict(stats), "outcome": stats.outcome}
             self.log.info("source_complete", source=source.id, outcome=stats.outcome,
@@ -302,7 +338,7 @@ def build_registry(settings: Settings | None = None, access=None, logger=None) -
     """Every portal NexBase knows, wired to its handler, for one run."""
     settings = settings or get_settings()
     log = logger or get_logger("nexbase.discovery.registry")
-    registry = SourceRegistry(log)
+    registry = SourceRegistry(log, max_workers=settings.source_max_workers)
     disabled = settings.disabled_sources
     budget = settings.source_max_calls_per_run
     interval = settings.source_min_interval_seconds
@@ -328,12 +364,34 @@ def build_registry(settings: Settings | None = None, access=None, logger=None) -
             disabled_reason=None if settings.apify_api_token else "APIFY_API_TOKEN not set",
             min_interval_seconds=interval,
             max_calls_per_run=settings.apify_max_calls_per_run))
-    # A slice is downloaded once per run, however many queries read it.
+    # A slice is downloaded once per run, however many queries read it, and one
+    # ats-scrapers client serves every ATS query: a client per query re-fetched
+    # the manifest and the 3.4 MB companies directory (load test 2026-09-17:
+    # 12 manifest and 6 directory downloads for 30 queries).
     slice_cache = ATSSliceCache(log)
+    client_lock = threading.Lock()
+
+    @lru_cache(maxsize=1)
+    def _build_client():
+        client = build_cached_client(
+            slice_cache, ATSSliceStore(settings.ats_cache_dir, settings.freshness_max_days, log))
+        # The library loads the manifest and companies directory lazily and without a
+        # lock, so workers reaching a fresh client together each downloaded them
+        # (load test 2026-09-17: 4 + 4 with 8 workers). Load both here, once.
+        client.manifest
+        if settings.ats_resolve_company_sites:
+            client.companies()
+        return client
+
+    def client_factory():
+        # lru_cache alone is not a once-guard: 8 concurrent ATS workers built 3
+        # clients (load test 2026-09-17, 3 manifest + 3 directory downloads).
+        with client_lock:
+            return _build_client()
     for portal in ATS_PORTALS:
         registry.register(Source(
             portal, SourceClass.ATS, "ats-scrapers",
-            _ats_adapter(portal, settings, log, slice_cache),
+            _ats_adapter(portal, settings, log, slice_cache, client_factory),
             enabled=portal not in disabled, max_calls_per_run=budget))
 
     unknown = disabled - {s.portal for s in registry.sources()}
@@ -354,8 +412,10 @@ def _jobspy_adapter(portal: str, settings, log) -> Adapter:
 
 
 def _board_adapter(scraper_class, access, log) -> Adapter:
+    seen_keys: set[str] = set()  # one source's queries run in order, never concurrently
+
     def search(query: SourceQuery):
-        scraper = scraper_class(access=access, logger=log)
+        scraper = scraper_class(access=access, logger=log, seen_keys=seen_keys)
         jobs = scraper.search(
             search_terms=[query.title.title], locations=[query.geo.name],
             client_industry=query.sector, hours_old=query.hours_old)
@@ -363,9 +423,9 @@ def _board_adapter(scraper_class, access, log) -> Adapter:
     return search
 
 
-def _ats_adapter(portal: str, settings, log, slice_cache) -> Adapter:
+def _ats_adapter(portal: str, settings, log, slice_cache, client_factory=None) -> Adapter:
     def search(query: SourceQuery):
-        ats = ATSDiscovery(settings, log, slice_cache=slice_cache)
+        ats = ATSDiscovery(settings, log, slice_cache=slice_cache, client_factory=client_factory)
         # The slice is local and already cut to US rows inside the freshness
         # window, so the only limit is the general per-query budget. Several
         # slices store only "US" as a location, so state queries cannot reach

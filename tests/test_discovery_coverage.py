@@ -30,15 +30,15 @@ from tests.test_hardening import StubAccess
 # ===========================================================================
 def test_board_pagination_continues_until_the_source_is_exhausted(settings):
     """Three pages of rows, then an empty one: all three pages are taken."""
-    from nexbase.discovery.board_scrapers import SimplyHiredDiscovery
+    from nexbase.discovery.board_scrapers import PostJobFreeDiscovery
 
     pages = {1: 5, 2: 5, 3: 2, 4: 0}
     seen_pages = []
 
-    scraper = SimplyHiredDiscovery(access=StubAccess({}, settings=settings))
+    scraper = PostJobFreeDiscovery(access=StubAccess({}, settings=settings))
     scraper.access.fetch = lambda url: _page(url)
     scraper.parse = lambda html, url, client_industry=None: _rows(
-        int(url.rsplit("pn=", 1)[-1]), pages, seen_pages)
+        int(url.rsplit("&p=", 1)[-1].split("&")[0]), pages, seen_pages)
     scraper._enrich_from_detail_pages = lambda found: None
 
     jobs = scraper.search(search_terms=["welder"], locations=["USA"], pages=25)
@@ -51,13 +51,13 @@ def test_board_pagination_continues_until_the_source_is_exhausted(settings):
 
 def test_a_board_stopped_by_our_budget_says_so(settings):
     """Every page still had new rows, so the board had more and we stopped."""
-    from nexbase.discovery.board_scrapers import SimplyHiredDiscovery
+    from nexbase.discovery.board_scrapers import PostJobFreeDiscovery
 
     seen_pages = []
-    scraper = SimplyHiredDiscovery(access=StubAccess({}, settings=settings))
+    scraper = PostJobFreeDiscovery(access=StubAccess({}, settings=settings))
     scraper.access.fetch = lambda url: _page(url)
     scraper.parse = lambda html, url, client_industry=None: _rows(
-        int(url.rsplit("pn=", 1)[-1]), {}, seen_pages, default=5)
+        int(url.rsplit("&p=", 1)[-1].split("&")[0]), {}, seen_pages, default=5)
     scraper._enrich_from_detail_pages = lambda found: None
 
     scraper.search(search_terms=["welder"], locations=["USA"], pages=3)
@@ -474,7 +474,7 @@ def test_every_ats_source_in_a_run_shares_one_slice_cache(settings, monkeypatch)
     caches = []
 
     class FakeATS:
-        def __init__(self, settings, log, slice_cache=None):
+        def __init__(self, settings, log, slice_cache=None, client_factory=None):
             caches.append(slice_cache)
             self.errors = []
 
@@ -499,3 +499,170 @@ def test_a_standalone_discovery_still_gets_its_own_cache(settings):
     discovery = ATSDiscovery(settings)
     assert isinstance(discovery.slice_cache, ATSSliceCache)
     assert discovery.slice_cache.stats()["downloads"] == 0
+
+
+# ===========================================================================
+# Load test 2026-09-17: LinkedIn paging and partial results
+# ===========================================================================
+class _LinkedInResponse:
+    def __init__(self, status, ids):
+        self.status_code = status
+        self.text = "".join(
+            f'<div class="base-search-card"><a class="base-card__full-link" '
+            f'href="https://www.linkedin.com/jobs/view/warehouse-{i}?x=1"></a></div>' for i in ids)
+
+
+def _paged_linkedin(monkeypatch, pages):
+    """A PagedLinkedIn whose session answers from ``pages`` keyed by start offset."""
+    import nexbase.discovery.jobspy_discovery as mod
+
+    cls = mod._paged_linkedin_class()
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    scraper = cls()
+    starts = []
+
+    def get(url, params=None, timeout=None):
+        starts.append(params["start"])
+        return pages.get(params["start"], _LinkedInResponse(200, []))
+
+    scraper.session.get = get
+    from jobspy.model import JobPost
+
+    scraper._process_job = lambda card, job_id, full: JobPost(
+        id=job_id, title="Warehouse Lead", company_name="Acme", location=None,
+        job_url=f"https://www.linkedin.com/jobs/view/{job_id}")
+    return scraper, starts
+
+
+def _input(results):
+    from jobspy.model import ScraperInput, Site
+
+    return ScraperInput(site_type=[Site.LINKEDIN], search_term="Warehouse", location="USA",
+                        results_wanted=results, hours_old=336)
+
+
+def test_linkedin_pages_by_the_cards_each_page_served(monkeypatch):
+    """JobSpy advanced start by its running total (0, 10, 30, 60), skipping pages."""
+    pages = {start: _LinkedInResponse(200, range(start, start + 10)) for start in range(0, 60, 10)}
+    scraper, starts = _paged_linkedin(monkeypatch, pages)
+    jobs = scraper.scrape(_input(35)).jobs
+    assert starts == [0, 10, 20, 30]
+    assert [j.id for j in jobs] == [str(i) for i in range(35)]
+
+
+def test_linkedin_moves_past_a_page_that_adds_nothing_new(monkeypatch):
+    pages = {0: _LinkedInResponse(200, range(10)), 10: _LinkedInResponse(200, range(10)),
+             20: _LinkedInResponse(200, range(10, 20))}
+    scraper, starts = _paged_linkedin(monkeypatch, pages)
+    jobs = scraper.scrape(_input(15)).jobs
+    assert starts == [0, 10, 20] and len(jobs) == 15
+
+
+def test_linkedin_stops_on_429_and_keeps_what_it_had(monkeypatch):
+    pages = {0: _LinkedInResponse(200, range(10)), 10: _LinkedInResponse(429, [])}
+    scraper, starts = _paged_linkedin(monkeypatch, pages)
+    assert [j.id for j in scraper.scrape(_input(50)).jobs] == [str(i) for i in range(10)]
+    assert starts == [0, 10]
+
+
+def test_jobspy_is_the_linkedin_class_scrape_jobs_uses(monkeypatch):
+    import jobspy
+
+    import nexbase.discovery.jobspy_discovery as mod
+
+    monkeypatch.setattr(jobspy, "scrape_jobs", lambda **kw: jobspy.LinkedIn)
+    assert mod._scrape_jobs.__wrapped__(site_name=["linkedin"]) is mod._paged_linkedin_class()
+
+
+def test_a_rate_limited_partial_result_keeps_its_rows_and_says_so(settings, monkeypatch):
+    """Rows JobSpy had before a 429 are kept; the query is RATE_LIMITED, not exhausted."""
+    import logging
+
+    import pandas as pd
+
+    import nexbase.discovery.jobspy_discovery as mod
+
+    def partial(**kwargs):
+        logging.getLogger("JobSpy:LinkedIn").error(
+            "429 Response - Blocked by LinkedIn for too many requests")
+        return pd.DataFrame([{"id": "li-1", "site": "linkedin", "title": "Warehouse Lead",
+                              "company": "Acme", "job_url": "https://www.linkedin.com/jobs/view/1"}])
+
+    monkeypatch.setattr(mod, "_scrape_jobs", partial)
+    discovery = mod.JobSpyDiscovery(settings)
+    jobs = discovery.search(["Warehouse"], ["USA"], site_names=["linkedin"], results_wanted=100)
+    outcome = discovery.last_outcomes[0]
+    assert len(jobs) == 1 and outcome.jobs_accepted == 1
+    assert outcome.stop_reason == "RATE_LIMITED" and "429" in outcome.error_message
+
+
+def test_concurrent_ats_workers_build_one_shared_client(settings, monkeypatch):
+    import threading
+    import time as _time
+
+    import pandas as pd
+
+    import nexbase.discovery.registry as reg
+    from nexbase.discovery.planner import NATIONWIDE, TitleVariant
+
+    built = []
+
+    loads = []
+
+    class FakeClient:
+        @property
+        def manifest(self):
+            _time.sleep(0.1)
+            loads.append("manifest")
+
+        def companies(self):
+            loads.append("companies")
+
+        def search(self, **kwargs):
+            return pd.DataFrame()
+
+    def slow_build(cache, store=None):
+        _time.sleep(0.2)
+        built.append(1)
+        return FakeClient()
+
+    monkeypatch.setattr(reg, "build_cached_client", slow_build)
+    registry = reg.build_registry(settings)
+    query = reg.SourceQuery(TitleVariant("Warehouse", "INPUT"), NATIONWIDE, "", 336)
+    threads = [threading.Thread(target=registry.get(p).adapter, args=(query,))
+               for p in reg.ATS_PORTALS]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert built == [1]
+    assert loads == ["manifest", "companies"], "loaded once, before any worker used it"
+
+
+def test_ats_slices_decode_one_at_a_time_but_are_read_concurrently():
+    """Ten slices decoding together peaked at 4.3 GB RSS under 8 workers."""
+    import threading
+    import time as _time
+
+    from nexbase.discovery.ats_discovery import ATSSliceCache
+
+    cache = ATSSliceCache()
+    active, peak = [0], [0]
+    guard = threading.Lock()
+
+    def loader():
+        with guard:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        _time.sleep(0.05)
+        with guard:
+            active[0] -= 1
+        return [1]
+
+    threads = [threading.Thread(target=cache.get, args=(f"slice{i}", loader)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 1 and cache.downloads == 6
+    assert cache.get("slice0", lambda: None) == [1], "a loaded slice is served without the gate"

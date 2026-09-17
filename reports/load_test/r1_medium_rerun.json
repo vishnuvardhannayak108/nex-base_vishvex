@@ -1,0 +1,551 @@
+{
+  "label": "r1_medium_rerun",
+  "generated_at": "2026-09-17T11:31:19.448445+00:00",
+  "load": {
+    "sector": "Manufacturing",
+    "job": "Warehouse Manager",
+    "variants": 1,
+    "calls": 4,
+    "workers": 1,
+    "jobspy_results": 150,
+    "pages": null,
+    "results": null,
+    "sources": "indeed,linkedin,simplyhired,talent_com,postjobfree,greenhouse,lever,ashby,workable,smartrecruiters,bamboohr,breezy,jazzhr,recruitee,paylocity"
+  },
+  "plan": {
+    "titles": [
+      "Warehouse Manager"
+    ],
+    "hours_old": 336,
+    "geo_partitions": 51
+  },
+  "runtime_seconds": 550.5,
+  "crashed": null,
+  "resources": {
+    "rss_mb_before": 109,
+    "rss_mb_peak": 1658,
+    "rss_mb_after": 1494,
+    "peak_threads": 42,
+    "peak_inet_connections": 2,
+    "lingering_threads": []
+  },
+  "access": {
+    "pages_fetched": 127,
+    "pages_blocked": 0,
+    "rate_limited": 0,
+    "robots_blocked": 0,
+    "camoufox_fallbacks": 0
+  },
+  "sources": {
+    "direct:indeed": {
+      "queries": 4,
+      "http_requests": 9,
+      "jobs_returned": 318,
+      "jobs_accepted": 314,
+      "schema_rejected": 0,
+      "fresh": 290,
+      "screened": 14,
+      "unique_companies": 197,
+      "runtime_seconds": 14.6,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 4
+      },
+      "stop_reasons": {
+        "BUDGET_REACHED": 1,
+        "SOURCE_EXHAUSTED": 3
+      },
+      "http_status": {
+        "200": 9
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 48,
+      "fanouts": 1,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "direct:linkedin": {
+      "queries": 1,
+      "http_requests": 153,
+      "jobs_returned": 139,
+      "jobs_accepted": 139,
+      "schema_rejected": 0,
+      "fresh": 139,
+      "screened": 0,
+      "unique_companies": 108,
+      "runtime_seconds": 228.9,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {
+        "200": 153
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "direct:simplyhired": {
+      "queries": 1,
+      "http_requests": 21,
+      "jobs_returned": 200,
+      "jobs_accepted": 161,
+      "schema_rejected": 0,
+      "fresh": 161,
+      "screened": 0,
+      "unique_companies": 145,
+      "runtime_seconds": 45.3,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {
+        "200": 21
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "direct:talent_com": {
+      "queries": 1,
+      "http_requests": 12,
+      "jobs_returned": 192,
+      "jobs_accepted": 158,
+      "schema_rejected": 0,
+      "fresh": 158,
+      "screened": 0,
+      "unique_companies": 149,
+      "runtime_seconds": 22.2,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {
+        "200": 12
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "direct:postjobfree": {
+      "queries": 4,
+      "http_requests": 97,
+      "jobs_returned": 956,
+      "jobs_accepted": 874,
+      "schema_rejected": 0,
+      "fresh": 773,
+      "screened": 0,
+      "unique_companies": 554,
+      "runtime_seconds": 228.0,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 4
+      },
+      "stop_reasons": {
+        "BUDGET_REACHED": 3,
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {
+        "200": 97
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 48,
+      "fanouts": 1,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:greenhouse": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 1,
+      "jobs_accepted": 1,
+      "schema_rejected": 0,
+      "fresh": 1,
+      "screened": 0,
+      "unique_companies": 1,
+      "runtime_seconds": 5.7,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:lever": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 1,
+      "jobs_accepted": 1,
+      "schema_rejected": 0,
+      "fresh": 1,
+      "screened": 0,
+      "unique_companies": 1,
+      "runtime_seconds": 0.7,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:ashby": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.7,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:workable": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 1,
+      "jobs_accepted": 1,
+      "schema_rejected": 0,
+      "fresh": 1,
+      "screened": 0,
+      "unique_companies": 1,
+      "runtime_seconds": 0.2,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:smartrecruiters": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 3,
+      "jobs_accepted": 3,
+      "schema_rejected": 0,
+      "fresh": 3,
+      "screened": 0,
+      "unique_companies": 2,
+      "runtime_seconds": 2.1,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:bamboohr": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.2,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:breezy": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.2,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:jazzhr": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.5,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:recruitee": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.1,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    },
+    "ats:paylocity": {
+      "queries": 1,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.0,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 1
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": []
+    }
+  },
+  "integrity": {
+    "duplicate_slices": {},
+    "duplicate_rawjobs": {},
+    "mixed_sources": {},
+    "metric_mismatch": {},
+    "duplicate_requests": {
+      "direct:indeed": {
+        "https://apis.indeed.com/graphql {\"query\": \"\\n    query GetJobData {\\n        jobSearch(\\n        what: \\\"Warehouse Manager\\\"\\n        location: {where: \\\"Alabama\\\", radius: 50, radiusUnit: MILES}\\n        limit: 100\\n        \\n        sort: RELEVANCE\\n        \\n            filters: {\\n                date: {\\n                  field: \\\"dateOnIndeed\\\",\\n                  start: \\\"336h\\\"\\n                }\\n            }\\n            \\n        ) {\\n        pageInfo {\\n            nextCursor\\n        }\\n        results {\\n            trackingKey\\n            job {\\n            source {\\n                name\\n            }\\n            key\\n            title\\n            datePublished\\n            dateOnIndeed\\n            description {\\n                html\\n            }\\n            location {\\n                countryName\\n                countryCode\\n                admin1Code\\n                city\\n                postalCode\\n                streetAddress\\n                formatted {\\n                short\\n                long\\n                }\\n            }\\n            compensation {\\n                estimated {\\n                currencyCode\\n                baseSalary {\\n                    unitOfWork\\n                    range {\\n                    ... on Range {\\n                        min\\n                        max\\n                    }\\n                    }\\n                }\\n                }\\n                baseSalary {\\n                unitOfWork\\n                range {\\n                    ... on Range {\\n                    min\\n                    max\\n                    }\\n                }\\n                }\\n                currencyCode\\n            }\\n            attributes {\\n                key\\n                label\\n            }\\n            employer {\\n                relativeCompanyPageUrl\\n                name\\n                dossier {\\n                    employerDetails {\\n                    addresses\\n                    industry\\n                    employeesLocalizedLabel\\n                    revenueLocalizedLabel\\n                    briefDescription\\n                    ceoName\\n                    ceoPhotoUrl\\n                    }\\n                    images {\\n                        headerImageUrl\\n                        squareLogoUrl\\n                    }\\n                    links {\\n                    corporateWebsite\\n                }\\n                }\\n            }\\n            recruit {\\n                viewJobUrl\\n                detailedSalary\\n                workSchedule\\n            }\\n            }\\n        }\\n        }\\n    }\\n    \"}": 2,
+        "https://apis.indeed.com/graphql {\"query\": \"\\n    query GetJobData {\\n        jobSearch(\\n        what: \\\"Warehouse Manager\\\"\\n        location: {where: \\\"Alaska\\\", radius: 50, radiusUnit: MILES}\\n        limit: 100\\n        \\n        sort: RELEVANCE\\n        \\n            filters: {\\n                date: {\\n                  field: \\\"dateOnIndeed\\\",\\n                  start: \\\"336h\\\"\\n                }\\n            }\\n            \\n        ) {\\n        pageInfo {\\n            nextCursor\\n        }\\n        results {\\n            trackingKey\\n            job {\\n            source {\\n                name\\n            }\\n            key\\n            title\\n            datePublished\\n            dateOnIndeed\\n            description {\\n                html\\n            }\\n            location {\\n                countryName\\n                countryCode\\n                admin1Code\\n                city\\n                postalCode\\n                streetAddress\\n                formatted {\\n                short\\n                long\\n                }\\n            }\\n            compensation {\\n                estimated {\\n                currencyCode\\n                baseSalary {\\n                    unitOfWork\\n                    range {\\n                    ... on Range {\\n                        min\\n                        max\\n                    }\\n                    }\\n                }\\n                }\\n                baseSalary {\\n                unitOfWork\\n                range {\\n                    ... on Range {\\n                    min\\n                    max\\n                    }\\n                }\\n                }\\n                currencyCode\\n            }\\n            attributes {\\n                key\\n                label\\n            }\\n            employer {\\n                relativeCompanyPageUrl\\n                name\\n                dossier {\\n                    employerDetails {\\n                    addresses\\n                    industry\\n                    employeesLocalizedLabel\\n                    revenueLocalizedLabel\\n                    briefDescription\\n                    ceoName\\n                    ceoPhotoUrl\\n                    }\\n                    images {\\n                        headerImageUrl\\n                        squareLogoUrl\\n                    }\\n                    links {\\n                    corporateWebsite\\n                }\\n                }\\n            }\\n            recruit {\\n                viewJobUrl\\n                detailedSalary\\n                workSchedule\\n            }\\n            }\\n        }\\n        }\\n    }\\n    \"}": 2,
+        "https://apis.indeed.com/graphql {\"query\": \"\\n    query GetJobData {\\n        jobSearch(\\n        what: \\\"Warehouse Manager\\\"\\n        location: {where: \\\"Arizona\\\", radius: 50, radiusUnit: MILES}\\n        limit: 100\\n        \\n        sort: RELEVANCE\\n        \\n            filters: {\\n                date: {\\n                  field: \\\"dateOnIndeed\\\",\\n                  start: \\\"336h\\\"\\n                }\\n            }\\n            \\n        ) {\\n        pageInfo {\\n            nextCursor\\n        }\\n        results {\\n            trackingKey\\n            job {\\n            source {\\n                name\\n            }\\n            key\\n            title\\n            datePublished\\n            dateOnIndeed\\n            description {\\n                html\\n            }\\n            location {\\n                countryName\\n                countryCode\\n                admin1Code\\n                city\\n                postalCode\\n                streetAddress\\n                formatted {\\n                short\\n                long\\n                }\\n            }\\n            compensation {\\n                estimated {\\n                currencyCode\\n                baseSalary {\\n                    unitOfWork\\n                    range {\\n                    ... on Range {\\n                        min\\n                        max\\n                    }\\n                    }\\n                }\\n                }\\n                baseSalary {\\n                unitOfWork\\n                range {\\n                    ... on Range {\\n                    min\\n                    max\\n                    }\\n                }\\n                }\\n                currencyCode\\n            }\\n            attributes {\\n                key\\n                label\\n            }\\n            employer {\\n                relativeCompanyPageUrl\\n                name\\n                dossier {\\n                    employerDetails {\\n                    addresses\\n                    industry\\n                    employeesLocalizedLabel\\n                    revenueLocalizedLabel\\n                    briefDescription\\n                    ceoName\\n                    ceoPhotoUrl\\n                    }\\n                    images {\\n                        headerImageUrl\\n                        squareLogoUrl\\n                    }\\n                    links {\\n                    corporateWebsite\\n                }\\n                }\\n            }\\n            recruit {\\n                viewJobUrl\\n                detailedSalary\\n                workSchedule\\n            }\\n            }\\n        }\\n        }\\n    }\\n    \"}": 2
+      }
+    }
+  },
+  "ats_dataset_requests": {
+    "total": 2,
+    "by_url": {
+      "https://storage.stapply.ai/jobhive/v1/manifest.json": 1,
+      "https://storage.stapply.ai/jobhive/v1/companies.parquet": 1
+    },
+    "unattributed_hosts": {}
+  },
+  "totals": {
+    "jobs": 1652,
+    "requests": 294,
+    "requests_by_thread": {
+      "ThreadPoolExecutor-4_0": 153,
+      "MainThread": 132,
+      "ThreadPoolExecutor-3_0": 3,
+      "ThreadPoolExecutor-0_0": 2,
+      "ThreadPoolExecutor-1_0": 2,
+      "ThreadPoolExecutor-2_0": 2
+    }
+  }
+}

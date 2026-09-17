@@ -1,0 +1,489 @@
+{
+  "label": "r3_confirm_linkedin_ats",
+  "generated_at": "2026-09-17T13:48:06.311109+00:00",
+  "load": {
+    "sector": "Manufacturing",
+    "job": "Warehouse",
+    "variants": 5,
+    "calls": 15,
+    "workers": 8,
+    "jobspy_results": 100,
+    "pages": null,
+    "results": null,
+    "sources": "linkedin,greenhouse,lever,ashby,workable,smartrecruiters,bamboohr,breezy,jazzhr,recruitee,paylocity"
+  },
+  "plan": {
+    "titles": [
+      "Warehouse",
+      "Warehouse Driver",
+      "Warehouse Person",
+      "Warehouse Worker",
+      "Warehouse Technician"
+    ],
+    "hours_old": 336,
+    "geo_partitions": 51
+  },
+  "runtime_seconds": 2410.2,
+  "crashed": null,
+  "resources": {
+    "rss_mb_before": 109,
+    "rss_mb_peak": 2778,
+    "rss_mb_after": 277,
+    "peak_threads": 58,
+    "peak_inet_connections": 8,
+    "lingering_threads": []
+  },
+  "access": {
+    "pages_fetched": 0,
+    "pages_blocked": 0,
+    "rate_limited": 0,
+    "robots_blocked": 0,
+    "camoufox_fallbacks": 0
+  },
+  "sources": {
+    "direct:linkedin": {
+      "queries": 15,
+      "http_requests": 1652,
+      "jobs_returned": 1500,
+      "jobs_accepted": 1316,
+      "schema_rejected": 0,
+      "fresh": 1316,
+      "screened": 0,
+      "unique_companies": 756,
+      "runtime_seconds": 2410.2,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 15
+      },
+      "stop_reasons": {
+        "BUDGET_REACHED": 15
+      },
+      "http_status": {
+        "200": 1651,
+        "None": 1
+      },
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 1,
+      "connection_errors": 1,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 245,
+      "fanouts": 5,
+      "last_error": null,
+      "request_error_samples": [
+        "ConnectionError: HTTPSConnectionPool(host='www.linkedin.com', port=443): Read timed out."
+      ],
+      "linkedin_start_offsets": [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90
+      ]
+    },
+    "ats:greenhouse": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 30,
+      "jobs_accepted": 30,
+      "schema_rejected": 0,
+      "fresh": 30,
+      "screened": 0,
+      "unique_companies": 24,
+      "runtime_seconds": 13.5,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:lever": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 3,
+      "jobs_accepted": 3,
+      "schema_rejected": 0,
+      "fresh": 3,
+      "screened": 0,
+      "unique_companies": 2,
+      "runtime_seconds": 6.4,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:ashby": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 2,
+      "jobs_accepted": 2,
+      "schema_rejected": 0,
+      "fresh": 2,
+      "screened": 0,
+      "unique_companies": 1,
+      "runtime_seconds": 5.3,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:workable": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 10,
+      "jobs_accepted": 10,
+      "schema_rejected": 0,
+      "fresh": 10,
+      "screened": 0,
+      "unique_companies": 10,
+      "runtime_seconds": 5.9,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:smartrecruiters": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 92,
+      "jobs_accepted": 89,
+      "schema_rejected": 0,
+      "fresh": 86,
+      "screened": 0,
+      "unique_companies": 26,
+      "runtime_seconds": 14.8,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 4,
+        "EMPTY_RESULT": 1
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:bamboohr": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 7,
+      "jobs_accepted": 7,
+      "schema_rejected": 0,
+      "fresh": 7,
+      "screened": 0,
+      "unique_companies": 6,
+      "runtime_seconds": 12.8,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:breezy": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 1.4,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 5
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:jazzhr": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 4,
+      "jobs_accepted": 4,
+      "schema_rejected": 0,
+      "fresh": 1,
+      "screened": 0,
+      "unique_companies": 2,
+      "runtime_seconds": 4.5,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:recruitee": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 0,
+      "jobs_accepted": 0,
+      "schema_rejected": 0,
+      "fresh": 0,
+      "screened": 0,
+      "unique_companies": 0,
+      "runtime_seconds": 0.6,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "EMPTY_RESULT": 5
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    },
+    "ats:paylocity": {
+      "queries": 5,
+      "http_requests": null,
+      "jobs_returned": 1,
+      "jobs_accepted": 1,
+      "schema_rejected": 0,
+      "fresh": 1,
+      "screened": 0,
+      "unique_companies": 1,
+      "runtime_seconds": 0.1,
+      "success_rate": 1.0,
+      "failure_rate": 0.0,
+      "classes": {
+        "OK": 1,
+        "EMPTY_RESULT": 4
+      },
+      "stop_reasons": {
+        "SOURCE_EXHAUSTED": 5
+      },
+      "http_status": {},
+      "http_429": 0,
+      "http_403": 0,
+      "timeouts": 0,
+      "connection_errors": 0,
+      "captcha_cloudflare": 0,
+      "parse_errors": 0,
+      "silent_empty": 0,
+      "skipped_queries": 0,
+      "fanouts": 0,
+      "last_error": null,
+      "request_error_samples": [],
+      "linkedin_start_offsets": null
+    }
+  },
+  "integrity": {
+    "duplicate_slices": {},
+    "duplicate_rawjobs": {},
+    "mixed_sources": {},
+    "metric_mismatch": {},
+    "duplicate_requests": {
+      "direct:linkedin": {
+        "count": 184,
+        "samples": [
+          "https://www.linkedin.com/jobs/view/4466234785",
+          "https://www.linkedin.com/jobs/view/4461987011",
+          "https://www.linkedin.com/jobs/view/4461926442"
+        ]
+      }
+    }
+  },
+  "ats_dataset_requests": {
+    "total": 13,
+    "by_url": {
+      "https://storage.stapply.ai/jobhive/v1/manifest.json": 7,
+      "https://storage.stapply.ai/jobhive/v1/companies.parquet": 6
+    },
+    "unattributed_hosts": {}
+  },
+  "totals": {
+    "jobs": 1462,
+    "requests": 1665,
+    "requests_by_thread": {
+      "ThreadPoolExecutor-6_0": 111,
+      "ThreadPoolExecutor-11_0": 111,
+      "ThreadPoolExecutor-0_0": 110,
+      "ThreadPoolExecutor-1_0": 110,
+      "ThreadPoolExecutor-2_0": 110,
+      "ThreadPoolExecutor-3_0": 110,
+      "ThreadPoolExecutor-4_0": 110,
+      "ThreadPoolExecutor-5_0": 110
+    }
+  }
+}

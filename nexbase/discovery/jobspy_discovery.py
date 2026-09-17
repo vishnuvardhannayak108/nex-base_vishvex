@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from functools import lru_cache
 from itertools import product
 
 from tenacity import (
@@ -33,8 +34,10 @@ from nexbase.core.models import RawJob
 from nexbase.core.source_tracking import JOB_BOARD, SourceInfo
 from nexbase.core.timeutils import coerce_datetime
 from nexbase.discovery.coverage import (
+    BLOCKED,
     BUDGET_REACHED,
     ERROR,
+    RATE_LIMITED,
     SOURCE_EXHAUSTED,
     SourceOutcome,
     classify_source_log,
@@ -52,10 +55,13 @@ class _JobSpyLogCapture(logging.Handler):
     from a genuinely empty search unless we listen on them directly.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, site: str | None = None) -> None:
         super().__init__(level=logging.WARNING)
         self.messages: list[str] = []
         self._attached: list[logging.Logger] = []
+        #: Listen to this site's loggers only: with sources running concurrently,
+        #: listening to every JobSpy logger filed LinkedIn's 429 under Indeed.
+        self.site = site
 
     def emit(self, record) -> None:
         try:
@@ -70,6 +76,9 @@ class _JobSpyLogCapture(logging.Handler):
         names = {n for n in logging.root.manager.loggerDict if n.startswith("JobSpy:")}
         names |= {"JobSpy:Indeed", "JobSpy:LinkedIn", "JobSpy:Linkedin",
                   "JobSpy:ZipRecruiter", "JobSpy:Glassdoor", "JobSpy:Google"}
+        if self.site:
+            wanted = self.site.replace("_", "").lower()
+            names = {n for n in names if n.split(":", 1)[1].lower() == wanted}
         for name in names:
             logger = logging.getLogger(name)
             logger.addHandler(self)
@@ -98,9 +107,90 @@ SUPPORTED_SITES = frozenset(
     reraise=True,
 )
 def _scrape_jobs(**kwargs):
-    from jobspy import scrape_jobs
+    import jobspy
 
-    return scrape_jobs(**kwargs)
+    # scrape_jobs builds its LinkedIn scraper from this module name at call time.
+    jobspy.LinkedIn = _paged_linkedin_class()
+    return jobspy.scrape_jobs(**kwargs)
+
+
+@lru_cache(maxsize=1)
+def _paged_linkedin_class():
+    """JobSpy's LinkedIn scraper with its page offset fixed (python-jobspy 1.1.82).
+
+    The guest search serves 10 cards per ``start`` offset, but JobSpy advances
+    ``start`` by its running job total (0, 10, 30, 60, 100 ...), so most pages
+    were never requested: load test 2026-09-17 recorded exactly those offsets,
+    and a live check showed offsets 0, 10, 20 and 30 each hold 10 distinct jobs.
+    A page that added nothing also repeated the same request. Only the paging
+    loop is replaced; the request, parsing, 429 logging and description fetch
+    are JobSpy's own. Remove when upstream pages by the cards served.
+    """
+    import random
+
+    from bs4 import BeautifulSoup
+    from jobspy.linkedin import LinkedIn, log
+    from jobspy.linkedin.util import job_type_code
+    from jobspy.model import JobResponse
+
+    class PagedLinkedIn(LinkedIn):
+        def scrape(self, scraper_input):
+            self.scraper_input = scraper_input
+            job_list, seen_ids = [], set()
+            start = scraper_input.offset // 10 * 10 if scraper_input.offset else 0
+            seconds_old = scraper_input.hours_old * 3600 if scraper_input.hours_old else None
+            while len(job_list) < scraper_input.results_wanted and start < 1000:
+                params = {
+                    "keywords": scraper_input.search_term,
+                    "location": scraper_input.location,
+                    "distance": scraper_input.distance,
+                    "f_WT": 2 if scraper_input.is_remote else None,
+                    "f_JT": (job_type_code(scraper_input.job_type)
+                             if scraper_input.job_type else None),
+                    "pageNum": 0,
+                    "start": start,
+                    "f_AL": "true" if scraper_input.easy_apply else None,
+                    "f_C": (",".join(map(str, scraper_input.linkedin_company_ids))
+                            if scraper_input.linkedin_company_ids else None),
+                    "f_TPR": f"r{seconds_old}" if seconds_old is not None else None,
+                }
+                params = {k: v for k, v in params.items() if v is not None}
+                try:
+                    response = self.session.get(
+                        f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
+                        params=params, timeout=10)
+                except Exception as exc:
+                    log.error(f"LinkedIn: {exc}")
+                    break
+                if response.status_code not in range(200, 400):
+                    log.error("429 Response - Blocked by LinkedIn for too many requests"
+                              if response.status_code == 429 else
+                              f"LinkedIn response status code {response.status_code}")
+                    break
+                cards = BeautifulSoup(response.text, "html.parser").find_all(
+                    "div", class_="base-search-card")
+                if not cards:
+                    break
+                for card in cards:
+                    link = card.find("a", class_="base-card__full-link")
+                    if not (link and "href" in link.attrs):
+                        continue
+                    job_id = link.attrs["href"].split("?")[0].split("-")[-1]
+                    if job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+                    post = self._process_job(card, job_id,
+                                             scraper_input.linkedin_fetch_description)
+                    if post:
+                        job_list.append(post)
+                    if len(job_list) >= scraper_input.results_wanted:
+                        break
+                start += len(cards)
+                if len(job_list) < scraper_input.results_wanted:
+                    time.sleep(random.uniform(self.delay, self.delay + self.band_delay))
+            return JobResponse(jobs=job_list[: scraper_input.results_wanted])
+
+    return PagedLinkedIn
 
 
 def _clean(value):
@@ -209,7 +299,7 @@ class JobSpyDiscovery:
                     site, {"jobs": 0, "calls": 0, "errors": 0, "last_error": None}
                 )
                 status["calls"] += 1
-                captured = _JobSpyLogCapture()
+                captured = _JobSpyLogCapture(site)
                 try:
                     with captured:
                         df = _scrape_jobs(
@@ -281,6 +371,18 @@ class JobSpyDiscovery:
                 outcome.stop_reason = (
                     BUDGET_REACHED if outcome.jobs_returned >= results_wanted
                     else SOURCE_EXHAUSTED)
+                # JobSpy keeps the rows it had when a later page is refused (LinkedIn
+                # logs "429 ... too many requests" and returns them). Those rows are
+                # kept, but the query is a rate-limited or blocked partial result,
+                # never "exhausted" - and a failed query must not fan out.
+                reason, message = classify_source_log(captured.messages)
+                if reason in (RATE_LIMITED, BLOCKED):
+                    outcome.stop_reason, outcome.error_message = reason, message
+                    status["errors"] += 1
+                    status["last_error"] = message
+                    self.log.warning("jobspy_search_partial", term=term, location=location,
+                                     site=site, stop_reason=reason, rows=len(df),
+                                     detail=message)
                 outcome.runtime_seconds = round(time.monotonic() - started, 2)
 
                 self.log.info(

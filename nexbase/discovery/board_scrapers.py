@@ -22,7 +22,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote, quote_plus, urljoin
 
 from bs4 import BeautifulSoup
 
@@ -207,6 +207,10 @@ class BoardScraper(ABC):
     source: SourceInfo = JOB_BOARD
     config: BoardConfig
 
+    #: A page with no new rows ends the walk: most boards repeat their last page
+    #: instead of returning nothing.
+    stop_on_repeated_page: bool = True
+
     #: Detail pages fetched per search page. Results cards carry a title and a
     #: company; the description - and therefore any published email address -
     #: only exists on the posting itself. Bounded because this is one extra
@@ -214,8 +218,12 @@ class BoardScraper(ABC):
     detail_page_budget: int = 10
 
     def __init__(self, access: AccessLayer | None = None, logger=None,
-                 fetch_details: bool | None = None) -> None:
+                 fetch_details: bool | None = None, seen_keys: set[str] | None = None) -> None:
         self.access = access or AccessLayer()
+        #: Job keys already taken this run, shared by the source's queries: a job
+        #: found again by another title or state is not re-fetched (load test
+        #: 2026-09-17: one SimplyHired posting's detail page fetched 5 times).
+        self.seen_keys = seen_keys if seen_keys is not None else set()
         self.log = logger or get_logger(f"nexbase.discovery.{self.config.site}")
         from nexbase.config import get_settings
 
@@ -372,6 +380,9 @@ class BoardScraper(ABC):
                         outcome.stop_reason = BUDGET_REACHED
                         break
                     url = self.search_url(term, location, page, hours_old)
+                    if url is None:
+                        # The board offered no link to this page: the result set ended.
+                        break
                     self.log.info(
                         "board_search_start",
                         site=self.config.site,
@@ -415,8 +426,8 @@ class BoardScraper(ABC):
                             "no job rows parsed and no 'no results' message on page 1")
                         self.log.warning("board_parse_failed", site=self.config.site, url=url)
                         break
-                    self._enrich_from_detail_pages(found)
                     new = 0
+                    fresh_rows = []
                     for job in found:
                         key = job.external_id or job.application_url or ""
                         if not key or key in seen:
@@ -425,6 +436,12 @@ class BoardScraper(ABC):
                         seen.add(key)
                         records.append(job)
                         new += 1
+                        if key not in self.seen_keys:
+                            fresh_rows.append(job)
+                            self.seen_keys.add(key)
+                    # Details only for rows not already taken: a repeated row is
+                    # dropped by the registry, so fetching its page is wasted.
+                    self._enrich_from_detail_pages(fresh_rows)
                     outcome.jobs_returned += len(found)
                     outcome.jobs_accepted += new
                     accepted_here += new
@@ -441,7 +458,7 @@ class BoardScraper(ABC):
                     # Nothing parsed, or nothing on this page we had not already
                     # seen: boards repeat the final page rather than 404, so
                     # both mean the result set is finished.
-                    if not found or not new:
+                    if not found or (not new and self.stop_on_repeated_page):
                         outcome.stop_reason = SOURCE_EXHAUSTED
                         break
                 else:
@@ -533,12 +550,29 @@ class SimplyHiredDiscovery(BoardScraper):
     config = BoardConfig(
         site="simplyhired",
         base_url="https://www.simplyhired.com",
-        search_template=(
-            "https://www.simplyhired.com/search?q={term}&l={location}&pn={page}"
-        ),
+        search_template="https://www.simplyhired.com/search?q={term}&l={location}",
         date_template="&t={days}",
         no_results_markers=("did not find any",),
     )
+
+    #: Pages 2+ are reached only through the ``pageCursors`` the previous page
+    #: published. ``pn`` is ignored: load test 2026-09-17, "Warehouse Manager" USA
+    #: returned page 1 for every ``pn`` (``currentPageNumber`` stayed 1), so 20 of
+    #: 4,344 results were read and the source reported itself exhausted.
+    _page_cursors: dict[str, str] = {}
+    #: Cursor pages overlap: live 2026-09-17, "Warehouse Manager" USA had pages with
+    #: 0 new rows followed by pages with 15-20 (3 empty pages in a row, then 15),
+    #: so stopping at the first repeat read 109 jobs where 25 pages hold 264. The
+    #: walk ends when no cursor is offered, a page parses nothing, or our page budget.
+    stop_on_repeated_page = False
+
+    def search_url(self, term, location, page=1, hours_old=None):
+        url = super().search_url(term, location, page, hours_old)
+        if page == 1:
+            self._page_cursors = {}
+            return url
+        cursor = self._page_cursors.get(str(page))
+        return f"{url}&cursor={quote(cursor, safe='')}" if cursor else None
 
     def parse(self, html, page_url, client_industry=None):
         jobs = self._from_next_data(html, client_industry)
@@ -550,9 +584,12 @@ class SimplyHiredDiscovery(BoardScraper):
         soup = BeautifulSoup(html or "", "html.parser")
         script = soup.find("script", id="__NEXT_DATA__")
         try:
-            listed = json.loads(script.string)["props"]["pageProps"]["jobs"]
+            props = json.loads(script.string)["props"]["pageProps"]
+            listed = props["jobs"]
         except (AttributeError, KeyError, TypeError, ValueError):
             return None
+        cursors = props.get("pageCursors")
+        self._page_cursors = dict(cursors) if isinstance(cursors, dict) else {}
         jobs: list[RawJob] = []
         for item in listed or []:
             if not isinstance(item, dict) or not item.get("title"):

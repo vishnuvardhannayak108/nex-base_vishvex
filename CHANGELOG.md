@@ -8,6 +8,79 @@ Pre-Phase-1 snapshot: `Desktop/nex-base-backup-2026-09-16-pre-phase1.tar.gz`.
 
 ---
 
+## Heavy load source testing (2026-09-17)
+
+Direct + ATS source layer only (Indeed, LinkedIn, SimplyHired, Talent.com, PostJobFree
+and 10 ATS slices), live, progressively loaded. No qualification, contacts, enrichment,
+verification or outreach; Apify not run. Harness: `scripts/load_test_sources.py`
+(counts every HTTP request per source and status, memory, threads, duplicate slices /
+requests / RawJobs, cross-source mixing, metric consistency). Reports:
+`reports/load_test/*.json`.
+
+| Round | Load | Runtime | Jobs | Failures |
+|---|---|---|---|---|
+| 1 medium | Warehouse Manager, 1 title, 4 queries/source, JobSpy 150, sequential | 551 s | 1,652 (after fixes) | 0 |
+| 2 high | 3 planner titles, 8 queries/source, JobSpy 100, 2 then 4 workers | 1,240 / 1,205 s | 3,623 / 3,554 | 0 |
+| 3 stress | "Warehouse" 5 titles, 15 queries/source, 8 workers | 2,237 s | 9,681 | 0 |
+| 3 stress | "Operations" 5 titles, 15 queries/source, 8 workers (no LinkedIn) | 1,091 s | 9,547 | 0 |
+| 3 confirm | LinkedIn + ATS, same Warehouse stress load, after fixes | 2,410 s | 1,316 LinkedIn | 0 (1 read timeout of 1,652 requests) |
+
+No 429, 403, CAPTCHA, Cloudflare, robots block, parse failure, Camoufox fallback, crash
+or lingering worker thread in any round. No duplicate planner slice, duplicate RawJob,
+cross-source result or metric mismatch.
+
+### Fixed (each re-run at the same load)
+
+- **SimplyHired read only page 1** (`board_scrapers.py`): `pn` is ignored
+  (`currentPageNumber` stayed 1), so 20 of 4,344 results were read and the source reported
+  itself exhausted. Pages 2+ now use the `pageCursors` the previous page publishes. R1: 20 ->
+  161 jobs.
+- **SimplyHired stopped at an overlapping page**: cursor pages overlap (runs of up to 3 pages
+  with nothing new, then 15-20 new), so stopping at the first repeat was random (page 8 in
+  one run, page 14 in another). It now stops when no cursor is offered, a page parses
+  nothing, or the page budget ends (reported BUDGET_REACHED). R2 load: 292 -> 854 jobs.
+- **LinkedIn skipped most result pages** (`jobspy_discovery.py`): python-jobspy 1.1.82
+  advances `start` by its running job total (recorded live: 0, 10, 30, 60, 100 ...) though
+  every offset holds 10 distinct jobs (checked live at 0/10/20/30). A small subclass replaces
+  only the paging loop (request, parsing and description fetch stay JobSpy's). Stress load:
+  offsets contiguous, 15/15 queries full (was 11/15), 1,249 -> 1,316 jobs, 653 -> 756
+  companies, 0 429s.
+- **Rate-limited partial JobSpy results reported as success**: LinkedIn logs a 429 and
+  returns the rows it had; those rows are now kept and the query is RATE_LIMITED (no fan-out).
+  Not observed live (no 429 occurred); covered by tests.
+- **ATS slice load memory** (`ats_discovery.py`): whole slices were decoded before the
+  14-day filter; now one Parquet row group at a time, filtered immediately. SmartRecruiters
+  load peak 2,354 -> 1,223 MB, Greenhouse 1,942 -> 436 MB; R1 run peak 2,986 -> 1,658 MB.
+- **ATS slices decoding together** : 10 slices loading at once under 8 workers peaked at
+  4,286 MB RSS; one slice decodes at a time (searches stay concurrent): 1,802 MB, +1.8 s.
+- **ATS manifest and companies directory re-downloaded** (`registry.py`): a client per
+  query (12 manifest + 6 directory downloads for 30 queries); then a racy shared client
+  (3 + 3 at 8 workers); then the library's own lazy, unlocked loads (4 + 4). One locked,
+  pre-loaded client per run: 1 + 1. ATS probe 42 s -> 11 s.
+- **Board detail pages re-fetched**: details are fetched only for rows not already taken
+  in the run (a SimplyHired posting's page was fetched 5 times).
+- **Parallel source execution** (`registry.py`, `SOURCE_MAX_WORKERS`, default 1 = unchanged):
+  sources run concurrently, each source's own queries stay sequential under its interval,
+  results merge in registration order, a crashed worker is that source's error.
+- **JobSpy log capture under concurrency**: it listened to every JobSpy logger, so a
+  concurrent LinkedIn 429 would be filed under Indeed; it now listens to its own site only.
+
+### Not changed (external / library)
+
+- JobSpy re-fetches a LinkedIn description when the same job appears in another query of the
+  run (131-184 requests, 9-11% of LinkedIn requests at stress load). The scraper is created
+  inside JobSpy's own thread pool, so no safe per-run cache exists without forking it.
+- JobSpy's Indeed loop sends one redundant request when a query exhausts before its cap
+  (1-3 per run).
+- LinkedIn is the wall-clock bottleneck: ~1.8 s/job because each description is a separate,
+  deliberately delayed request (Indeed: 0.02 s/job, 100 jobs with descriptions per request).
+- ATS slices match titles only and skew to tech/office employers: 147 jobs for "Warehouse",
+  707 for "Operations".
+
+Tests: 998 passed (980 before).
+
+---
+
 ## Live handler smoke + fixes (2026-09-17)
 
 Every non-Apify discovery handler (5 direct boards, 10 ATS slices) run live through

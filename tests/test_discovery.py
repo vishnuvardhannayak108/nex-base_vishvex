@@ -188,6 +188,51 @@ def test_board_search_urls_well_formed():
     assert "simplyhired.com" in simply and "plant+manager" in simply
 
 
+def _simplyhired_page(keys, cursors):
+    import json as _json
+
+    data = {"props": {"pageProps": {
+        "jobs": [{"jobKey": k, "title": "Warehouse Manager", "company": f"Co {k}",
+                  "location": "Columbus, OH", "botUrl": f"/job/{k}",
+                  "dateOnIndeed": 1789000000000} for k in keys],
+        "pageCursors": cursors, "currentPageNumber": 1}}}
+    return (f'<html><script id="__NEXT_DATA__" type="application/json">'
+            f'{_json.dumps(data)}</script></html>')
+
+
+def test_simplyhired_pages_with_the_cursor_the_previous_page_published():
+    """pn is ignored by SimplyHired: page 2+ needs the page's own cursor."""
+    scraper = SimplyHiredDiscovery()
+    first = scraper.search_url("warehouse manager", "USA", page=1, hours_old=336)
+    assert "pn=" not in first and "cursor=" not in first and "t=14" in first
+    scraper.parse(_simplyhired_page(["a", "b"], {"2": "AB+/c=="}), first)
+    second = scraper.search_url("warehouse manager", "USA", page=2, hours_old=336)
+    assert second.endswith("&cursor=AB%2B%2Fc%3D%3D")
+    scraper.parse(_simplyhired_page(["c"], {"1": "x"}), second)
+    assert scraper.search_url("warehouse manager", "USA", page=3, hours_old=336) is None
+
+
+def test_simplyhired_search_walks_cursor_pages_and_stops_when_none_is_offered():
+    from nexbase.access.fetcher import FetchedPage
+
+    pages = {1: _simplyhired_page(["a", "b"], {"2": "c2"}),
+             2: _simplyhired_page(["c", "d"], {"1": "c1", "3": "c3"}),
+             3: _simplyhired_page(["e"], {"2": "c2"})}
+    fetched = []
+
+    class Access:
+        def fetch(self, url):
+            page = 1 if "cursor=" not in url else int(url.rsplit("c", 1)[-1])
+            fetched.append(url)
+            return FetchedPage(url=url, status=200, html=pages[page], title="", engine="TEST",
+                               used_fallback=False)
+
+    scraper = SimplyHiredDiscovery(access=Access(), fetch_details=False)
+    jobs = scraper.search(["warehouse manager"], ["USA"], hours_old=336)
+    assert [j.raw["job_key"] for j in jobs] == ["a", "b", "c", "d", "e"]
+    assert len(fetched) == 3 and scraper.last_outcomes[0].stop_reason == "SOURCE_EXHAUSTED"
+
+
 @pytest.mark.parametrize("cls", [SimplyHiredDiscovery, TalentComDiscovery, PostJobFreeDiscovery])
 def test_board_scraper_returns_nothing_for_empty_html(cls):
     assert cls().parse("", "https://x") == []
@@ -393,3 +438,58 @@ def test_month_day_returns_none_rather_than_guessing(bad):
     from nexbase.discovery.board_scrapers import parse_month_day
 
     assert parse_month_day(bad) is None
+
+
+def test_simplyhired_keeps_walking_past_an_overlapping_page():
+    """A cursor page with no new rows is not the end: the next one may have 20."""
+    from nexbase.access.fetcher import FetchedPage
+
+    pages = {1: _simplyhired_page(["a", "b"], {"2": "c2"}),
+             2: _simplyhired_page(["a", "b"], {"3": "c3"}),
+             3: _simplyhired_page(["c", "d"], {"4": "c4"}),
+             4: _simplyhired_page(["e"], {})}
+
+    class Access:
+        def fetch(self, url):
+            page = 1 if "cursor=" not in url else int(url.rsplit("c", 1)[-1])
+            return FetchedPage(url=url, status=200, html=pages[page], title="", engine="TEST",
+                               used_fallback=False)
+
+    scraper = SimplyHiredDiscovery(access=Access(), fetch_details=False)
+    jobs = scraper.search(["warehouse manager"], ["USA"], hours_old=336)
+    assert [j.raw["job_key"] for j in jobs] == ["a", "b", "c", "d", "e"]
+    assert scraper.last_outcomes[0].stop_reason == "SOURCE_EXHAUSTED"
+    budgeted = SimplyHiredDiscovery(access=Access(), fetch_details=False)
+    budgeted.search(["warehouse manager"], ["USA"], pages=2, hours_old=336)
+    assert budgeted.last_outcomes[0].stop_reason == "BUDGET_REACHED"
+
+
+def test_a_board_fetches_a_detail_page_once_per_run_and_never_for_a_repeated_row():
+    """Load test 2026-09-17: a SimplyHired posting's detail page was fetched 5 times."""
+    from nexbase.access.fetcher import FetchedPage
+    from nexbase.discovery.board_scrapers import PostJobFreeDiscovery
+    from nexbase.core.models import RawJob
+
+    detail = []
+
+    class Access:
+        def fetch(self, url):
+            if "/job/" in url:
+                detail.append(url)
+            return FetchedPage(url=url, status=200, html="<html></html>", title="",
+                               engine="TEST", used_fallback=False)
+
+    def rows(keys):
+        return [RawJob(source_type="JOB_BOARD", source_priority=2, source_site="postjobfree",
+                       external_id=k, title="Warehouse Manager", company_name="Acme",
+                       application_url=f"https://www.postjobfree.com/job/{k}") for k in keys]
+
+    pages = {"Warehouse Manager": [["a", "b"], ["b", "c"], []],
+             "Warehouse Supervisor": [["a", "d"], []]}
+    shared: set[str] = set()
+    for term, script in pages.items():
+        scraper = PostJobFreeDiscovery(access=Access(), fetch_details=True, seen_keys=shared)
+        calls = iter(script)
+        scraper.parse = lambda html, url, client_industry=None, calls=calls: rows(next(calls))
+        scraper.search([term], ["USA"])
+    assert sorted(detail) == [f"https://www.postjobfree.com/job/{k}" for k in "abcd"]

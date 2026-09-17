@@ -58,7 +58,7 @@ Shared infrastructure:
 | 4 | Normalization, dedup, freshness, company identity | **done** |
 | 5 | Qualification engine | **done** |
 | 6 | Free/public contact discovery | **done** |
-| 7 | Enrichment: ZoomInfo primary, Apollo / Apify fallback | **done** (fixture-tested; no live accounts; no Apify actor confirmed) |
+| 7 | Enrichment: ZoomInfo primary, Apollo / Apify fallback | implemented, tested with mocks/fixtures; **live validation pending client credentials** (see Provider status) |
 | 8 | POC ranking, email verification, final lead, export | pending |
 | 9 | Observability, source health, hardening | pending |
 
@@ -311,7 +311,23 @@ timestamp. Each contact carries `origin` (e.g. `PUBLIC+ZOOMINFO+APOLLO`) and a
 `field_provenance` entry per supplied field; each call is an `enrichment_logs` row;
 each supplied field and company match is an evidence row.
 
-**Providers** (documented APIs only; no live account has exercised any of them):
+**Provider status.** The four levels are never collapsed into one.
+
+| Provider | Role | Implemented | Tested with mocks/fixtures | Live validation |
+|---|---|---|---|---|
+| ZoomInfo | PRIMARY | yes | yes | **PENDING CLIENT CREDENTIALS** |
+| Apollo | FALLBACK | yes | yes | **PENDING CLIENT CREDENTIALS** |
+| Apify | LAST FALLBACK | framework only, **no enrichment actor confirmed** | framework, with a test-only actor | **PENDING CLIENT CREDENTIALS and actor confirmation** |
+
+No provider is LIVE VALIDATED. Credentials are never invented, borrowed or worked
+around, and provider order does not change while they are missing. When the client
+supplies access, each provider gets a controlled live smoke test (authentication,
+company and contact matching, enrichment responses, real credit cost, rate-limit and
+error handling, provenance and `enrichment_logs`), compared against the fixtures, with
+discrepancies fixed before it is marked LIVE VALIDATED. An Apify actor is chosen only
+with explicit confirmation, and its real input/output schema is validated first.
+
+**Providers** (documented APIs only):
 - ZoomInfo Enterprise API (`/authenticate`, `/enrich/company`, `/search/contact`,
   `/enrich/contact`), marked by ZoomInfo as being deprecated. `ZOOMINFO_API_KEY` is
   `username:password` or a pre-issued JWT.
